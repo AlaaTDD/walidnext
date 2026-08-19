@@ -1,0 +1,17 @@
+{
+  "process_id": "process-1787119483037-8d173da4",
+  "name": "verify: TypeScript",
+  "command": "npx tsc --noEmit",
+  "cwd": "/Volumes/alaassD/walid/web",
+  "pid": 4486,
+  "detached": true,
+  "status": "failed",
+  "started_at": "2026-08-19T06:04:43.039Z",
+  "completed_at": "2026-08-19T06:04:46.380Z",
+  "exit_code": 2,
+  "signal": null,
+  "output_path": "/Volumes/alaassD/walid/web/.claude-surgical/verification/process-1787119483037-8d173da4.log",
+  "metadata_path": "/Volumes/alaassD/walid/web/.claude-surgical/verification/process-1787119483037-8d173da4.json",
+  "error": null,
+  "logging_error": null
+}

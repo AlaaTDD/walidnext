@@ -1,0 +1,19 @@
+[2026-08-19T06:05:46.363Z] Starting: npm run build
+
+> web@0.1.0 build
+> next build
+
+   [1m[38;2;173;127;168m▲ Next.js 15.5.23[39m[22m
+
+ [37m[1m [22m[39m Creating an optimized production build ...
+ [32m[1m✓[22m[39m Compiled successfully in 1756ms
+ [37m[1m [22m[39m Linting and checking validity of types ...
+[31m
+Failed to compile.[39m
+
+[36m./src/lib/nestingJobStore.ts[39m
+[33m21[39m:[33m8[39m  [31m[1mError[22m[39m: 'NestingJobStage' is defined but never used.  [90m[1m@typescript-eslint/no-unused-vars[22m[39m
+[33m566[39m:[33m42[39m  [31m[1mError[22m[39m: '_get' is defined but never used.  [90m[1m@typescript-eslint/no-unused-vars[22m[39m
+
+[36minfo[39m  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules
+[2026-08-19T06:05:53.123Z] Process failed: exit=1 signal=none

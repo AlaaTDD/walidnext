@@ -1,0 +1,20 @@
+[2026-08-19T06:11:32.693Z] Starting: npm run dev 2>&1
+
+> web@0.1.0 dev
+> next dev
+
+ ⚠ Port 3000 is in use by process 2913, using available port 3001 instead.
+   ▲ Next.js 15.5.23
+   - Local:        http://localhost:3001
+   - Network:      http://192.168.1.100:3001
+
+ ✓ Starting...
+ ✓ Ready in 1753ms
+ ○ Compiling / ...
+ ✓ Compiled / in 2.4s (600 modules)
+ GET / 200 in 2784ms
+ ✓ Compiled in 207ms (248 modules)
+ ✓ Compiled /favicon.ico in 142ms (369 modules)
+ GET /favicon.ico 200 in 236ms
+[?25h
+[2026-08-19T06:12:01.779Z] Process failed: exit=null signal=SIGTERM

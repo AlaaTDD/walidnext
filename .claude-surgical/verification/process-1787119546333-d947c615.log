@@ -1,0 +1,17 @@
+[2026-08-19T06:05:46.333Z] Starting: npm run lint
+
+> web@0.1.0 lint
+> next lint
+
+[33m`next lint` is deprecated and will be removed in Next.js 16.
+[39mFor new projects, use [1mcreate-next-app[22m to choose your preferred linter.
+For existing projects, migrate to the ESLint CLI:
+[1mnpx @next/codemod@canary next-lint-to-eslint-cli .[22m
+
+
+[36m./src/lib/nestingJobStore.ts[39m
+[33m21[39m:[33m8[39m  [31m[1mError[22m[39m: 'NestingJobStage' is defined but never used.  [90m[1m@typescript-eslint/no-unused-vars[22m[39m
+[33m566[39m:[33m42[39m  [31m[1mError[22m[39m: '_get' is defined but never used.  [90m[1m@typescript-eslint/no-unused-vars[22m[39m
+
+[36minfo[39m  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules
+[2026-08-19T06:05:49.447Z] Process failed: exit=1 signal=none

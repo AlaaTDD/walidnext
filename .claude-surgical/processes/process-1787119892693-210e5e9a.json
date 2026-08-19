@@ -1,0 +1,17 @@
+{
+  "process_id": "process-1787119892693-210e5e9a",
+  "name": "next_dev_verify",
+  "command": "npm run dev 2>&1",
+  "cwd": "/Volumes/alaassD/walid/web",
+  "pid": 5626,
+  "detached": true,
+  "status": "stopped",
+  "started_at": "2026-08-19T06:11:32.693Z",
+  "completed_at": "2026-08-19T06:12:01.779Z",
+  "exit_code": null,
+  "signal": "SIGTERM",
+  "output_path": "/Volumes/alaassD/walid/web/.claude-surgical/processes/process-1787119892693-210e5e9a.log",
+  "metadata_path": "/Volumes/alaassD/walid/web/.claude-surgical/processes/process-1787119892693-210e5e9a.json",
+  "error": null,
+  "logging_error": null
+}

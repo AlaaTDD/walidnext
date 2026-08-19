@@ -1,0 +1,11 @@
+[2026-08-19T06:04:43.039Z] Starting: npx tsc --noEmit
+error TS6053: File '/Volumes/alaassD/walid/web/.next/types/app/layout.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in '/Volumes/alaassD/walid/web/tsconfig.json'
+error TS6053: File '/Volumes/alaassD/walid/web/.next/types/app/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in '/Volumes/alaassD/walid/web/tsconfig.json'
+error TS6053: File '/Volumes/alaassD/walid/web/.next/types/cache-life.d.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in '/Volumes/alaassD/walid/web/tsconfig.json'
+[2026-08-19T06:04:46.380Z] Process failed: exit=2 signal=none

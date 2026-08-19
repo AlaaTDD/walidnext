@@ -1,0 +1,17 @@
+{
+  "process_id": "process-1787119483064-4eb6a06a",
+  "name": "verify: Lint",
+  "command": "npm run lint",
+  "cwd": "/Volumes/alaassD/walid/web",
+  "pid": 4487,
+  "detached": true,
+  "status": "failed",
+  "started_at": "2026-08-19T06:04:43.064Z",
+  "completed_at": "2026-08-19T06:04:48.548Z",
+  "exit_code": 1,
+  "signal": null,
+  "output_path": "/Volumes/alaassD/walid/web/.claude-surgical/verification/process-1787119483064-4eb6a06a.log",
+  "metadata_path": "/Volumes/alaassD/walid/web/.claude-surgical/verification/process-1787119483064-4eb6a06a.json",
+  "error": null,
+  "logging_error": null
+}

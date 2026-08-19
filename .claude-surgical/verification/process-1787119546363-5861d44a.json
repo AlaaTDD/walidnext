@@ -1,0 +1,17 @@
+{
+  "process_id": "process-1787119546363-5861d44a",
+  "name": "verify: Build",
+  "command": "npm run build",
+  "cwd": "/Volumes/alaassD/walid/web",
+  "pid": 4621,
+  "detached": true,
+  "status": "failed",
+  "started_at": "2026-08-19T06:05:46.363Z",
+  "completed_at": "2026-08-19T06:05:53.123Z",
+  "exit_code": 1,
+  "signal": null,
+  "output_path": "/Volumes/alaassD/walid/web/.claude-surgical/verification/process-1787119546363-5861d44a.log",
+  "metadata_path": "/Volumes/alaassD/walid/web/.claude-surgical/verification/process-1787119546363-5861d44a.json",
+  "error": null,
+  "logging_error": null
+}

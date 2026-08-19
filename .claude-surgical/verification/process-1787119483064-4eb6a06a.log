@@ -1,0 +1,24 @@
+[2026-08-19T06:04:43.064Z] Starting: npm run lint
+
+> web@0.1.0 lint
+> next lint
+
+[33m`next lint` is deprecated and will be removed in Next.js 16.
+[39mFor new projects, use [1mcreate-next-app[22m to choose your preferred linter.
+For existing projects, migrate to the ESLint CLI:
+[1mnpx @next/codemod@canary next-lint-to-eslint-cli .[22m
+
+
+[36m./src/components/ExportScreen.tsx[39m
+[33m13[39m:[33m27[39m  [31m[1mError[22m[39m: 'QaReport' is defined but never used.  [90m[1m@typescript-eslint/no-unused-vars[22m[39m
+
+[36m./src/lib/nestingJobStore.ts[39m
+[33m22[39m:[33m8[39m  [31m[1mError[22m[39m: 'NestingComputeResult' is defined but never used.  [90m[1m@typescript-eslint/no-unused-vars[22m[39m
+[33m27[39m:[33m3[39m  [31m[1mError[22m[39m: 'defaultSettings' is defined but never used.  [90m[1m@typescript-eslint/no-unused-vars[22m[39m
+[33m36[39m:[33m10[39m  [31m[1mError[22m[39m: 'NestingConstants' is defined but never used.  [90m[1m@typescript-eslint/no-unused-vars[22m[39m
+[33m120[39m:[33m10[39m  [31m[1mError[22m[39m: 'stageFor' is defined but never used.  [90m[1m@typescript-eslint/no-unused-vars[22m[39m
+[33m573[39m:[33m42[39m  [31m[1mError[22m[39m: 'get' is defined but never used.  [90m[1m@typescript-eslint/no-unused-vars[22m[39m
+[33m1073[39m:[33m12[39m  [31m[1mError[22m[39m: 'state' is defined but never used.  [90m[1m@typescript-eslint/no-unused-vars[22m[39m
+
+[36minfo[39m  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules
+[2026-08-19T06:04:48.548Z] Process failed: exit=1 signal=none

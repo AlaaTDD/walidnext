@@ -1,0 +1,31 @@
+[2026-08-19T06:06:30.926Z] Starting: npm run build
+
+> web@0.1.0 build
+> next build
+
+   [1m[38;2;173;127;168m▲ Next.js 15.5.23[39m[22m
+
+ [37m[1m [22m[39m Creating an optimized production build ...
+ [32m[1m✓[22m[39m Compiled successfully in 1747ms
+ [37m[1m [22m[39m Linting and checking validity of types ...
+ [37m[1m [22m[39m Collecting page data ...
+ [37m[1m [22m[39m Generating static pages (0/5) ...
+ [37m[1m [22m[39m Generating static pages (1/5) 
+ [37m[1m [22m[39m Generating static pages (2/5) 
+ [37m[1m [22m[39m Generating static pages (3/5) 
+ [32m[1m✓[22m[39m Generating static pages (5/5)
+ [37m[1m [22m[39m Finalizing page optimization ...
+ [37m[1m [22m[39m Collecting build traces ...
+
+[4mRoute (app)[24m                                 [4mSize[24m  [4mFirst Load JS[24m  [4m[24m  [4m[24m
+┌ ○ /                                    20.5 kB         [37m[1m123 kB[22m[39m
+└ ○ /_not-found                            999 B         [37m[1m104 kB[22m[39m
++ First Load JS shared by all             [37m[1m103 kB[22m[39m
+  ├ chunks/255-87552e6e05b8e3aa.js       46.4 kB
+  ├ chunks/4bd1b696-c023c6e3521b1417.js  54.2 kB
+  └ other shared chunks (total)          1.89 kB
+
+
+○  (Static)  prerendered as static content
+
+[2026-08-19T06:06:42.189Z] Process completed: exit=0 signal=none
