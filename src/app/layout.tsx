@@ -7,8 +7,8 @@ import "./globals.css";
  * Arabic UI throughout every screen.
  */
 export const metadata: Metadata = {
-  title: "Sheet Nesting",
-  description: "ترتيب وتجهيز صور الطباعة على الشيت بدقة هندسية كاملة.",
+  title: "وليد لترتيب الشيتات",
+  description: "تطبيق وليد لترتيب وتجهيز صور الطباعة على الشيت بدقة هندسية كاملة.",
 };
 
 export const viewport: Viewport = {

@@ -80,7 +80,9 @@ export function UploadScreen({ onProceed }: { onProceed: () => void }) {
   return (
     <div className="flex flex-col h-screen bg-slate-50">
       <header className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
-        <h1 className="flex-1 text-lg font-bold text-slate-900">تجهيز الصور</h1>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/walid_logo.jpg" alt="Walid Logo" className="h-8 w-8 rounded-[8px] object-cover shadow-sm" />
+        <h1 className="flex-1 text-lg font-bold text-slate-900">وليد - تجهيز الصور</h1>
         <ServerBadge reachable={serverReachable} />
         <button
           onClick={() => setSettingsOpen(true)}
@@ -221,7 +223,7 @@ function HeaderBlock({
   return (
     <div className="rounded-[14px] border border-slate-200 bg-white p-4 shadow-[0_1px_2px_var(--card-shadow)]">
       <h2 className="text-[19px] font-extrabold text-slate-900">
-        جاهز لترتيب الشيت؟
+        يا وليد، جاهز لترتيب الشيت؟
       </h2>
       <p className="mt-[5px] text-[12.5px] leading-[1.5] text-slate-500">
         ارفع صورك بأي صيغة: PNG أو JPG أو JPEG أو WebP أو TIFF وغيرها. السيرفر
