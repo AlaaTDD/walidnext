@@ -7,36 +7,74 @@
  * (AppColors + AppMotion). Same names, same hex values, same durations.
  */
 :root {
+  /* --------------------------------------------------------------------
+   * Every Tailwind theme color below is defined TWICE, on purpose:
+   *
+   * 1. A `-rgb` variable holding bare space-separated R G B channels
+   *    (e.g. "37 99 235"), used ONLY by tailwind.config.ts's color
+   *    functions as `rgb(var(--x-rgb) / <alpha-value>)`.
+   * 2. The original hex variable (e.g. --primary: #2563eb), kept for any
+   *    plain-CSS `var(--primary)` usage (inline styles, non-Tailwind CSS)
+   *    that expects a normal CSS color value, not bare channel numbers.
+   *
+   * Tailwind's opacity modifier (bg-primary/50, bg-success/[0.1], etc.)
+   * ONLY works when the color variable Tailwind consumes holds bare RGB
+   * channels -- a hex string or a full rgb()/var() color has no channels
+   * for Tailwind to recompose with a runtime alpha value. Every color
+   * token that's ever used with an opacity modifier anywhere in the app
+   * (primary, success, warning, danger, info, and the slate scale) needs
+   * its -rgb sibling here; see tailwind.config.ts for how they're wired.
+   * -------------------------------------------------------------------- */
   --background: #f8fafc; /* slate50 */
   --foreground: #0f172a; /* slate900 */
 
   /* AppColors.primary family */
   --primary: #2563eb;
+  --primary-rgb: 37 99 235;
   --primary-dark: #1d4ed8;
+  --primary-dark-rgb: 29 78 216;
   --primary-light: #60a5fa;
+  --primary-light-rgb: 96 165 250;
 
   /* AppColors status family */
   --success: #16a34a;
+  --success-rgb: 22 163 74;
   --warning: #d97706;
+  --warning-rgb: 217 119 6;
   --danger: #dc2626;
+  --danger-rgb: 220 38 38;
   --info: #0891b2;
+  --info-rgb: 8 145 178;
 
   /* AppColors slate scale */
   --slate-50: #f8fafc;
+  --slate-50-rgb: 248 250 252;
   --slate-100: #f1f5f9;
+  --slate-100-rgb: 241 245 249;
   --slate-200: #e2e8f0;
+  --slate-200-rgb: 226 232 240;
   --slate-300: #cbd5e1;
+  --slate-300-rgb: 203 213 225;
   --slate-400: #94a3b8;
+  --slate-400-rgb: 148 163 184;
   --slate-500: #64748b;
+  --slate-500-rgb: 100 116 139;
   --slate-600: #475569;
+  --slate-600-rgb: 71 85 105;
   --slate-700: #334155;
+  --slate-700-rgb: 51 65 85;
   --slate-800: #1e293b;
+  --slate-800-rgb: 30 41 59;
   --slate-900: #0f172a;
+  --slate-900-rgb: 15 23 42;
   --slate-950: #020617;
+  --slate-950-rgb: 2 6 23;
 
   /* AppColors sheet-canvas family */
   --sheet-canvas: #ffffff;
+  --sheet-canvas-rgb: 255 255 255;
   --sheet-border: #cbd5e1;
+  --sheet-border-rgb: 203 213 225;
   --clearance-zone-fill: rgba(37, 99, 235, 0.1);
   --part-fill: rgba(51, 65, 85, 0.78);
   --part-selected-fill: rgba(37, 99, 235, 0.88);

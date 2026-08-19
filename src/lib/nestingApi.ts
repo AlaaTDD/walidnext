@@ -4,6 +4,42 @@
  * exactly so the backend (unchanged) speaks the same wire protocol.
  */
 
+/** ngrok's free tier serves an HTML interstitial warning page to any
+ * request that looks like it came from a browser, before it ever reaches
+ * the tunnelled backend -- breaking every fetch() call with an HTML
+ * response instead of JSON. This header (documented by ngrok) tells it to
+ * skip that page and forward the request straight through. Harmless to
+ * send against a non-ngrok backend; the header is simply ignored there.
+ */
+const NGROK_SKIP_HEADER = { "ngrok-skip-browser-warning": "true" } as const;
+
+/** ngrok's free tier issues a brand-new random subdomain every time the
+ * tunnel is (re)started, so whatever URL is saved in .env.local / localStorage
+ * inevitably goes stale the moment the backend restarts -- that stale-URL
+ * gap is what surfaces to the user as "Failed to fetch". ngrok always runs a
+ * local inspection API on the same machine as the tunnel (127.0.0.1:4040,
+ * no auth) that reports the tunnel's *current* public URL, but it sends no
+ * CORS headers -- a direct browser fetch() to it is blocked by CORS policy
+ * regardless of same-machine reachability. This app's own same-origin API
+ * route (/api/discover-tunnel) proxies that lookup server-side, where CORS
+ * enforcement doesn't apply, and simply reports "nothing found" when ngrok
+ * isn't reachable from this machine (e.g. in a real deployment). */
+const DISCOVER_TUNNEL_ROUTE = "/api/discover-tunnel";
+
+async function discoverLiveNgrokUrl(): Promise<string | null> {
+  try {
+    const responseText = await _xhrGet(DISCOVER_TUNNEL_ROUTE, 2500);
+    const data = JSON.parse(responseText);
+    const publicUrl = data?.publicUrl;
+    return typeof publicUrl === "string" && publicUrl.startsWith("https://")
+      ? publicUrl
+      : null;
+  } catch {
+    // Discovery route unreachable
+    return null;
+  }
+}
+
 export class ApiException extends Error {
   readonly statusCode?: number;
   constructor(message: string, statusCode?: number) {
@@ -16,6 +52,26 @@ export class ApiException extends Error {
 export interface UploadPayload {
   fileName: string;
   bytes: Uint8Array;
+}
+
+function _xhrGet(url: string, timeoutMs: number, headers?: Record<string, string>): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", url);
+    if (headers) {
+      for (const [key, value] of Object.entries(headers)) {
+        xhr.setRequestHeader(key, value);
+      }
+    }
+    xhr.timeout = timeoutMs;
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.responseText);
+      else reject(new ApiException(`HTTP ${xhr.status}`, xhr.status));
+    };
+    xhr.onerror = () => reject(new ApiException("Network Error"));
+    xhr.ontimeout = () => reject(new ApiException("Timeout"));
+    xhr.send();
+  });
 }
 
 function normalizeBaseUrl(value: string): string {
@@ -88,16 +144,42 @@ export class NestingApiClient {
     return this._baseUrl;
   }
 
-  async healthCheck(timeoutMs = 3000): Promise<void> {
-    const response = await fetch(`${this._baseUrl}/health`, {
-      signal: withTimeout(timeoutMs),
-    });
-    await ensure2xx(response);
+  private async _safeFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+    try {
+      return await fetch(input, init);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ApiException(`فشل الاتصال بالخادم: ${message}`);
+    }
+  }
+
+  /**
+   * Returns the live tunnel URL when the saved base URL was stale and a
+   * working replacement was auto-discovered via ngrok's local inspection
+   * API -- null in every other case (saved URL worked fine, or discovery
+   * found nothing). This client's own _baseUrl is intentionally left
+   * untouched here; the caller (which owns server-URL persistence) decides
+   * whether/how to switch to the discovered URL for subsequent requests.
+   */
+  async healthCheck(timeoutMs = 3000): Promise<string | null> {
+    try {
+      await _xhrGet(`${this._baseUrl}/health`, timeoutMs, NGROK_SKIP_HEADER);
+      return null;
+    } catch (originalError) {
+      const discovered = await discoverLiveNgrokUrl();
+      if (discovered == null || discovered === this._baseUrl) {
+        throw originalError;
+      }
+
+      await _xhrGet(`${discovered}/health`, timeoutMs, NGROK_SKIP_HEADER);
+      return discovered;
+    }
   }
 
   async createJob(): Promise<Record<string, unknown>> {
-    const response = await fetch(`${this._baseUrl}/jobs`, {
+    const response = await this._safeFetch(`${this._baseUrl}/jobs`, {
       method: "POST",
+      headers: NGROK_SKIP_HEADER,
       signal: withTimeout(15000),
     });
     await ensure2xx(response);
@@ -105,9 +187,10 @@ export class NestingApiClient {
   }
 
   async getJob(jobId: string): Promise<Record<string, unknown>> {
-    const response = await fetch(
+    const response = await this._safeFetch(
       `${this._baseUrl}/jobs/${encodeURIComponent(jobId)}`,
       {
+        headers: NGROK_SKIP_HEADER,
         signal: withTimeout(10000),
       },
     );
@@ -177,6 +260,7 @@ export class NestingApiClient {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", `${this._baseUrl}/upload`);
+      xhr.setRequestHeader("ngrok-skip-browser-warning", "true");
       xhr.timeout = 15 * 60 * 1000; // 15 minutes, matches Dart's Duration(minutes: 15)
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) onProgress?.(event.loaded, totalBytes);
@@ -200,18 +284,23 @@ export class NestingApiClient {
   }
 
   async deleteJobPart(jobId: string, clientPartId: string): Promise<void> {
-    const response = await fetch(
+    const response = await this._safeFetch(
       `${this._baseUrl}/jobs/${encodeURIComponent(jobId)}/parts/${encodeURIComponent(clientPartId)}`,
-      { method: "DELETE", signal: withTimeout(10000) },
+      {
+        method: "DELETE",
+        headers: NGROK_SKIP_HEADER,
+        signal: withTimeout(10000),
+      },
     );
     await ensure2xx(response);
   }
 
   async deleteJob(jobId: string): Promise<void> {
-    const response = await fetch(
+    const response = await this._safeFetch(
       `${this._baseUrl}/jobs/${encodeURIComponent(jobId)}`,
       {
         method: "DELETE",
+        headers: NGROK_SKIP_HEADER,
         signal: withTimeout(10000),
       },
     );
@@ -227,11 +316,11 @@ export class NestingApiClient {
     dpi: number;
     packingAttempts: number;
   }): Promise<Record<string, unknown>> {
-    const response = await fetch(
+    const response = await this._safeFetch(
       `${this._baseUrl}/layout/compute/${encodeURIComponent(params.jobId)}`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...NGROK_SKIP_HEADER },
         body: JSON.stringify({
           sheet_width_mm: params.sheetWidthMm,
           sheet_height_mm: params.sheetHeightMm,
@@ -248,9 +337,10 @@ export class NestingApiClient {
   }
 
   async getProgress(jobId: string): Promise<Record<string, unknown>> {
-    const response = await fetch(
+    const response = await this._safeFetch(
       `${this._baseUrl}/layout/progress/${encodeURIComponent(jobId)}`,
       {
+        headers: NGROK_SKIP_HEADER,
         signal: withTimeout(3000),
       },
     );
@@ -268,10 +358,14 @@ export class NestingApiClient {
     jobId: string,
     signal?: AbortSignal,
   ): AsyncGenerator<Record<string, unknown>, void, unknown> {
-    const response = await fetch(
+    const response = await this._safeFetch(
       `${this._baseUrl}/layout/progress/stream/${encodeURIComponent(jobId)}`,
       {
-        headers: { Accept: "text/event-stream", "Cache-Control": "no-cache" },
+        headers: {
+          Accept: "text/event-stream",
+          "Cache-Control": "no-cache",
+          ...NGROK_SKIP_HEADER,
+        },
         signal: withTimeout(15000, signal),
       },
     );
@@ -313,10 +407,11 @@ export class NestingApiClient {
   }
 
   async cancelLayout(jobId: string): Promise<void> {
-    const response = await fetch(
+    const response = await this._safeFetch(
       `${this._baseUrl}/layout/cancel/${encodeURIComponent(jobId)}`,
       {
         method: "POST",
+        headers: NGROK_SKIP_HEADER,
         signal: withTimeout(5000),
       },
     );
@@ -330,11 +425,11 @@ export class NestingApiClient {
     processedImagesPath: string;
     folderName?: string;
   }): Promise<Record<string, unknown>> {
-    const response = await fetch(
+    const response = await this._safeFetch(
       `${this._baseUrl}/layout/confirm/${encodeURIComponent(params.jobId)}`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...NGROK_SKIP_HEADER },
         body: JSON.stringify({
           mode: params.mode,
           background_color: params.backgroundColor,
@@ -354,9 +449,10 @@ export class NestingApiClient {
   }
 
   async downloadTiff(jobId: string): Promise<Uint8Array> {
-    const response = await fetch(
+    const response = await this._safeFetch(
       `${this._baseUrl}/download/${encodeURIComponent(jobId)}`,
       {
+        headers: NGROK_SKIP_HEADER,
         signal: withTimeout(10 * 60 * 1000),
       },
     );

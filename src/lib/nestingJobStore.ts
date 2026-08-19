@@ -223,7 +223,8 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
 
   checkServer: async () => {
     try {
-      await api.healthCheck();
+      const discoveredUrl = await api.healthCheck();
+      if (discoveredUrl != null) applyDiscoveredServerUrl(discoveredUrl);
       set({ serverReachable: true });
     } catch {
       set({ serverReachable: false });
@@ -561,6 +562,26 @@ type Getter = () => NestingJobState;
 // `api`/`uploadQueue` siblings above already treat as non-reactive. The
 // reactive `jobId` in the store stays in sync via every call site below.
 let moduleJobId: string | null = null;
+
+/**
+ * Adopts an auto-discovered ngrok URL (found by NestingApiClient.healthCheck
+ * after the previously saved URL stopped responding) as the client's base
+ * URL going forward, and persists it exactly like a manual updateServerUrl
+ * save would -- so the next reload/tab starts from the URL that's actually
+ * live instead of rediscovering it every time. Deliberately does NOT call
+ * checkServer() again: the caller already confirmed this exact URL just
+ * answered /health successfully in the same round trip.
+ */
+function applyDiscoveredServerUrl(discoveredUrl: string): void {
+  api = new NestingApiClient(discoveredUrl);
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem("serverUrl", discoveredUrl);
+    } catch {
+      // best-effort only
+    }
+  }
+}
 
 async function loadSettings(set: Setter): Promise<void> {
   if (typeof window === "undefined") return;
@@ -919,6 +940,14 @@ async function recoverRemoteState(set: Setter, get: Getter): Promise<void> {
         },
         serverReachable: error.statusCode != null,
       }));
+    } else {
+      set((state) => ({
+        job: {
+          ...state.job,
+          errorMessage: `تعذر الاتصال بالسيرفر: ${error}`,
+        },
+        serverReachable: false,
+      }));
     }
   }
 }
@@ -1062,8 +1091,9 @@ async function openProgressStream(
       const done = asInt(data.done);
       const total = asInt(data.total);
       const message = data.message?.toString() ?? null;
-      set(() =>
-        target === "compute"
+      set(() => ({
+        serverReachable: true,
+        ...(target === "compute"
           ? {
               computeProgressDone: done ?? null,
               computeProgressTotal: total ?? null,
@@ -1073,15 +1103,28 @@ async function openProgressStream(
               exportProgressDone: done ?? null,
               exportProgressTotal: total ?? null,
               exportProgressMessage: message,
-            },
-      );
+            }),
+      }));
       receivedTerminalEvent = data.complete === true;
     }
     if (!receivedTerminalEvent)
       reconnectProgressStream(set, jobId, generation, target);
   } catch {
-    if (!receivedTerminalEvent)
+    if (!receivedTerminalEvent) {
+      set({
+        serverReachable: false,
+        ...(target === "compute"
+          ? {
+              computeProgressMessage:
+                "انقطع الاتصال بالسيرفر، جارٍ إعادة المحاولة...",
+            }
+          : {
+              exportProgressMessage:
+                "انقطع الاتصال بالسيرفر، جارٍ إعادة المحاولة...",
+            }),
+      });
       reconnectProgressStream(set, jobId, generation, target);
+    }
   }
 }
 

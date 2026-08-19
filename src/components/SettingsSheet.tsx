@@ -58,6 +58,12 @@ function validatePositive(text: string): { value?: number; error?: string } {
 export function SettingsSheet({ onClose }: { onClose: () => void }) {
   const settings = useNestingJobStore((s) => s.job.settings);
   const updateSettings = useNestingJobStore((s) => s.updateSettings);
+  const currentServerUrl = useNestingJobStore((s) => s.baseUrl());
+  const updateServerUrl = useNestingJobStore((s) => s.updateServerUrl);
+  const serverReachable = useNestingJobStore((s) => s.serverReachable);
+
+  const [serverUrl, setServerUrl] = useState(currentServerUrl);
+  const [savingServerUrl, setSavingServerUrl] = useState(false);
 
   const [width, setWidth] = useState(settings.sheetWidthMm.toFixed(1));
   const [height, setHeight] = useState(settings.sheetHeightMm.toFixed(1));
@@ -143,7 +149,52 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
         <div className="border-t border-slate-200" />
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          <div className="flex gap-3">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+            <div className="flex items-center gap-2">
+              <span
+                className={`h-2 w-2 shrink-0 rounded-full ${
+                  serverReachable ? "bg-emerald-500" : "bg-danger"
+                }`}
+              />
+              <span className="text-xs font-semibold text-slate-600">
+                رابط السيرفر (ngrok)
+              </span>
+              <span
+                className={`mr-auto text-[11px] font-semibold ${
+                  serverReachable ? "text-emerald-600" : "text-danger"
+                }`}
+              >
+                {serverReachable ? "متصل" : "غير متصل"}
+              </span>
+            </div>
+            <input
+              value={serverUrl}
+              onChange={(e) => setServerUrl(e.target.value)}
+              placeholder="https://xxxx-xx-xx-xxx-xx.ngrok-free.app"
+              dir="ltr"
+              className="mt-2 w-full rounded-[11px] border border-slate-300 bg-white px-3.5 py-3 text-left text-sm text-slate-900 outline-none focus:border-primary"
+            />
+            <p className="mt-1.5 text-xs leading-snug text-slate-500">
+              الصقه من نافذة السيرفر (PUBLIC API URL) — بيتغيّر كل مرة يُشغَّل
+              السيرفر من جديد.
+            </p>
+            <button
+              onClick={async () => {
+                setSavingServerUrl(true);
+                try {
+                  await updateServerUrl(serverUrl);
+                } finally {
+                  setSavingServerUrl(false);
+                }
+              }}
+              disabled={savingServerUrl || serverUrl.trim().length === 0}
+              className="mt-2.5 w-full rounded-[11px] bg-primary py-2.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              {savingServerUrl ? "جاري الاتصال..." : "حفظ والاتصال"}
+            </button>
+          </div>
+
+          <div className="mt-3.5 flex gap-3">
             <NumberField
               label="عرض الشيت (mm)"
               value={width}

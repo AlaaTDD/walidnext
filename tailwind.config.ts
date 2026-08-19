@@ -9,32 +9,47 @@ export default {
   theme: {
     extend: {
       colors: {
+        // background/foreground are never used with an opacity modifier
+        // (bg-background/50 etc. don't appear anywhere in this codebase),
+        // so they're left as plain var() -- no -rgb sibling needed.
         background: "var(--background)",
         foreground: "var(--foreground)",
+        // Every other color below IS used with opacity modifiers
+        // (bg-primary/[0.07], border-success/25, bg-slate-700/[0.16], ...)
+        // somewhere in src/components/*. Tailwind can only apply an alpha
+        // channel to a color it can decompose into R/G/B, so each of these
+        // resolves through the bare-channel `--x-rgb` variable defined in
+        // globals.css, wrapped in the documented `rgb(var(...) / <alpha-value>)`
+        // format. `<alpha-value>` is replaced by Tailwind at build time with
+        // either 1 (no modifier) or the requested opacity (e.g. bg-primary/50
+        // -> 0.5, bg-success/[0.1] -> 0.1). Without this exact wrapper format,
+        // every class using `/opacity` on these colors silently compiles to
+        // 100% opaque with no build warning -- see the 33dd971ab2a7 UI-overhaul
+        // task handoff for how this was diagnosed against real compiled CSS.
         primary: {
-          DEFAULT: "var(--primary)",
-          dark: "var(--primary-dark)",
-          light: "var(--primary-light)",
+          DEFAULT: "rgb(var(--primary-rgb) / <alpha-value>)",
+          dark: "rgb(var(--primary-dark-rgb) / <alpha-value>)",
+          light: "rgb(var(--primary-light-rgb) / <alpha-value>)",
         },
-        success: "var(--success)",
-        warning: "var(--warning)",
-        danger: "var(--danger)",
-        info: "var(--info)",
+        success: "rgb(var(--success-rgb) / <alpha-value>)",
+        warning: "rgb(var(--warning-rgb) / <alpha-value>)",
+        danger: "rgb(var(--danger-rgb) / <alpha-value>)",
+        info: "rgb(var(--info-rgb) / <alpha-value>)",
         slate: {
-          50: "var(--slate-50)",
-          100: "var(--slate-100)",
-          200: "var(--slate-200)",
-          300: "var(--slate-300)",
-          400: "var(--slate-400)",
-          500: "var(--slate-500)",
-          600: "var(--slate-600)",
-          700: "var(--slate-700)",
-          800: "var(--slate-800)",
-          900: "var(--slate-900)",
-          950: "var(--slate-950)",
+          50: "rgb(var(--slate-50-rgb) / <alpha-value>)",
+          100: "rgb(var(--slate-100-rgb) / <alpha-value>)",
+          200: "rgb(var(--slate-200-rgb) / <alpha-value>)",
+          300: "rgb(var(--slate-300-rgb) / <alpha-value>)",
+          400: "rgb(var(--slate-400-rgb) / <alpha-value>)",
+          500: "rgb(var(--slate-500-rgb) / <alpha-value>)",
+          600: "rgb(var(--slate-600-rgb) / <alpha-value>)",
+          700: "rgb(var(--slate-700-rgb) / <alpha-value>)",
+          800: "rgb(var(--slate-800-rgb) / <alpha-value>)",
+          900: "rgb(var(--slate-900-rgb) / <alpha-value>)",
+          950: "rgb(var(--slate-950-rgb) / <alpha-value>)",
         },
-        "sheet-canvas": "var(--sheet-canvas)",
-        "sheet-border": "var(--sheet-border)",
+        "sheet-canvas": "rgb(var(--sheet-canvas-rgb) / <alpha-value>)",
+        "sheet-border": "rgb(var(--sheet-border-rgb) / <alpha-value>)",
       },
       transitionDuration: {
         fast: "160ms",

@@ -81,8 +81,14 @@ export function UploadScreen({ onProceed }: { onProceed: () => void }) {
     <div className="flex flex-col h-screen bg-slate-50">
       <header className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/walid_logo.jpg" alt="Walid Logo" className="h-8 w-8 rounded-[8px] object-cover shadow-sm" />
-        <h1 className="flex-1 text-lg font-bold text-slate-900">وليد - تجهيز الصور</h1>
+        <img
+          src="/walid_logo.jpg"
+          alt="Walid Logo"
+          className="h-8 w-8 rounded-[8px] object-cover shadow-sm"
+        />
+        <h1 className="flex-1 text-lg font-bold text-slate-900">
+          وليد - تجهيز الصور
+        </h1>
         <ServerBadge reachable={serverReachable} />
         <button
           onClick={() => setSettingsOpen(true)}
@@ -194,14 +200,31 @@ function TuneIcon() {
   );
 }
 
+// Tailwind's JIT compiler statically scans source for literal class strings
+// at build time; a template literal like `text-${color}` is invisible to
+// that scan unless the exact same string appears elsewhere verbatim, so the
+// class silently gets dropped from the compiled CSS in production. Using a
+// lookup object of pre-written literal strings keeps every class name whole
+// and greppable, which is Tailwind's documented fix for this exact pattern.
+const SERVER_BADGE_STYLES = {
+  success: {
+    wrap: "text-success border-success/25 bg-success/[0.08]",
+    dot: "bg-success",
+  },
+  warning: {
+    wrap: "text-warning border-warning/25 bg-warning/[0.08]",
+    dot: "bg-warning",
+  },
+} as const;
+
 function ServerBadge({ reachable }: { reachable: boolean }) {
-  const color = reachable ? "success" : "warning";
+  const styles = SERVER_BADGE_STYLES[reachable ? "success" : "warning"];
   return (
     <div
-      className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-${color} border-${color}/25 bg-${color}/[0.08]`}
+      className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 ${styles.wrap}`}
       title={reachable ? "الخادم متصل" : "الخادم غير متصل"}
     >
-      <span className={`h-[7px] w-[7px] rounded-full bg-${color}`} />
+      <span className={`h-[7px] w-[7px] rounded-full ${styles.dot}`} />
       <span className="text-[11px] font-bold">
         {reachable ? "متصل" : "انتظار"}
       </span>
@@ -230,7 +253,7 @@ function HeaderBlock({
         يجهزها تلقائيًا ويحلل الـcontour قبل الترتيب.
       </p>
       <div className="mt-3.5 flex flex-wrap gap-2">
-        <MetricChip label={`${total} صورة`} color="slate-700" />
+        <MetricChip label={`${total} صورة`} color="slate" />
         <MetricChip label={`${valid} صالحة`} color="success" />
         {pending > 0 && (
           <MetricChip label={`${pending} قيد الفحص`} color="info" />
@@ -243,10 +266,26 @@ function HeaderBlock({
   );
 }
 
-function MetricChip({ label, color }: { label: string; color: string }) {
+// Same static-scan issue as SERVER_BADGE_STYLES above -- every combination
+// this component actually renders is spelled out here as a whole literal
+// class string so Tailwind's compiler can find and keep it.
+const METRIC_CHIP_STYLES = {
+  slate: "text-slate-700 border-slate-700/[0.16] bg-slate-700/[0.07]",
+  success: "text-success border-success/[0.16] bg-success/[0.07]",
+  info: "text-info border-info/[0.16] bg-info/[0.07]",
+  danger: "text-danger border-danger/[0.16] bg-danger/[0.07]",
+} as const;
+
+function MetricChip({
+  label,
+  color,
+}: {
+  label: string;
+  color: keyof typeof METRIC_CHIP_STYLES;
+}) {
   return (
     <span
-      className={`rounded-[9px] border px-2.5 py-1.5 text-[11.5px] font-bold text-${color} border-${color}/[0.16] bg-${color}/[0.07]`}
+      className={`rounded-[9px] border px-2.5 py-1.5 text-[11.5px] font-bold ${METRIC_CHIP_STYLES[color]}`}
     >
       {label}
     </span>
@@ -366,12 +405,12 @@ function PartCard({
   part: UploadedPart;
   onRemove: () => void;
 }) {
-  const statusColor =
+  const statusColorClass =
     part.validationStatus === "valid"
-      ? "success"
+      ? "text-success"
       : part.validationStatus === "rejected"
-        ? "danger"
-        : "info";
+        ? "text-danger"
+        : "text-info";
   const statusText =
     part.validationStatus === "valid"
       ? "تم التحقق — جاهزة للـnesting"
@@ -411,7 +450,7 @@ function PartCard({
           {part.fileName}
         </p>
         <p
-          className={`mt-1 truncate text-[11.2px] font-semibold text-${statusColor}`}
+          className={`mt-1 truncate text-[11.2px] font-semibold ${statusColorClass}`}
         >
           {statusText}
         </p>

@@ -547,6 +547,16 @@ function SummaryPanel({
   );
 }
 
+// Tailwind's build-time scanner only sees whole literal class strings, so a
+// template literal like `bg-${color}/[0.1]` is invisible to it and gets
+// dropped from the compiled CSS -- every color this card can render is
+// spelled out fully here instead.
+const STATUS_CARD_STYLES = {
+  success: { iconWrap: "bg-success/[0.1] text-success", title: "text-success" },
+  warning: { iconWrap: "bg-warning/[0.1] text-warning", title: "text-warning" },
+  danger: { iconWrap: "bg-danger/[0.1] text-danger", title: "text-danger" },
+} as const;
+
 function StatusCard({
   result,
   sheetCount,
@@ -562,7 +572,11 @@ function StatusCard({
   const partial = result.unplacedPartIds.length > 0;
   const isCollisionValid =
     result.collisionReportValid && result.collisionViolations.length === 0;
-  const color = valid ? (partial ? "warning" : "success") : "danger";
+  const color: keyof typeof STATUS_CARD_STYLES = valid
+    ? partial
+      ? "warning"
+      : "success"
+    : "danger";
   const title = !isCollisionValid
     ? "يوجد خلل هندسي"
     : partial
@@ -574,12 +588,16 @@ function StatusCard({
   return (
     <div className="flex items-start gap-2.5 rounded-2xl border border-slate-200 bg-white p-3.5">
       <div
-        className={`flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-full bg-${color}/[0.1] text-${color}`}
+        className={`flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-full ${STATUS_CARD_STYLES[color].iconWrap}`}
       >
         {!valid ? <ErrorGlyph /> : partial ? <LayersGlyph /> : <CheckGlyph />}
       </div>
       <div className="min-w-0 flex-1">
-        <p className={`text-[13px] font-extrabold text-${color}`}>{title}</p>
+        <p
+          className={`text-[13px] font-extrabold ${STATUS_CARD_STYLES[color].title}`}
+        >
+          {title}
+        </p>
         <p className="mt-[3px] line-clamp-3 text-[11.4px] leading-[1.4] text-slate-500">
           {result.layoutMessage}
         </p>
@@ -638,6 +656,12 @@ function CheckGlyph() {
   );
 }
 
+const STAT_CARD_DOT_STYLES = {
+  success: "text-success",
+  warning: "text-warning",
+  info: "text-info",
+} as const;
+
 function StatCard({
   value,
   label,
@@ -645,11 +669,13 @@ function StatCard({
 }: {
   value: string;
   label: string;
-  color: string;
+  color: keyof typeof STAT_CARD_DOT_STYLES;
 }) {
   return (
     <div className="flex-1 rounded-2xl border border-slate-200 bg-white px-2.5 py-2.75 text-center">
-      <div className={`mx-auto h-[17px] w-[17px] text-${color}`}>
+      <div
+        className={`mx-auto h-[17px] w-[17px] ${STAT_CARD_DOT_STYLES[color]}`}
+      >
         <DotIcon />
       </div>
       <p className="mt-1.5 text-[15px] font-black text-slate-900">{value}</p>

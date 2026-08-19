@@ -248,6 +248,23 @@ function ExportingState({
   );
 }
 
+// Same static-scan fix as elsewhere: template literals like
+// `bg-${statusColor}/[0.06]` are invisible to Tailwind's build-time class
+// scanner and silently drop from the compiled CSS, so both full states this
+// screen can show are spelled out here as whole literal class strings.
+const COMPLETED_STATUS_STYLES = {
+  success: {
+    card: "border-success/[0.26] bg-success/[0.06]",
+    iconWrap: "bg-success/[0.12] text-success",
+    title: "text-success",
+  },
+  warning: {
+    card: "border-warning/[0.26] bg-warning/[0.06]",
+    iconWrap: "bg-warning/[0.12] text-warning",
+    title: "text-warning",
+  },
+} as const;
+
 function CompletedState({
   job,
   onSave,
@@ -269,19 +286,21 @@ function CompletedState({
       report.violations.length === 0
     : false;
   const result = job.computeResult;
-  const statusColor = accepted ? "success" : "warning";
+  const statusStyles = accepted
+    ? COMPLETED_STATUS_STYLES.success
+    : COMPLETED_STATUS_STYLES.warning;
 
   return (
     <div className="space-y-3.5 p-4.5">
       <div
-        className={`rounded-[18px] border p-5.5 text-center border-${statusColor}/[0.26] bg-${statusColor}/[0.06]`}
+        className={`rounded-[18px] border p-5.5 text-center ${statusStyles.card}`}
       >
         <div
-          className={`mx-auto flex h-[66px] w-[66px] items-center justify-center rounded-full bg-${statusColor}/[0.12] text-${statusColor}`}
+          className={`mx-auto flex h-[66px] w-[66px] items-center justify-center rounded-full ${statusStyles.iconWrap}`}
         >
           {accepted ? <CheckGlyph /> : <WarnGlyph />}
         </div>
-        <h2 className={`mt-3.5 text-lg font-black text-${statusColor}`}>
+        <h2 className={`mt-3.5 text-lg font-black ${statusStyles.title}`}>
           {accepted ? "تم التصدير والتحقق بنجاح" : "تم التصدير مع ملاحظات"}
         </h2>
         <p className="mt-1.5 text-[12.5px] leading-[1.5] text-slate-600">
@@ -401,6 +420,11 @@ function WarnGlyph() {
   );
 }
 
+const MINI_RESULT_STYLES = {
+  success: "text-success",
+  info: "text-info",
+} as const;
+
 function MiniResult({
   value,
   label,
@@ -408,11 +432,13 @@ function MiniResult({
 }: {
   value: string;
   label: string;
-  color: string;
+  color: keyof typeof MINI_RESULT_STYLES;
 }) {
   return (
     <div className="flex-1 rounded-2xl border border-slate-200 bg-white py-3 text-center">
-      <p className={`text-[15px] font-black text-${color}`}>{value}</p>
+      <p className={`text-[15px] font-black ${MINI_RESULT_STYLES[color]}`}>
+        {value}
+      </p>
       <p className="mt-[3px] text-[10.5px] text-slate-500">{label}</p>
     </div>
   );
