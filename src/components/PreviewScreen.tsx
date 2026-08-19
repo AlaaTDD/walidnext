@@ -74,13 +74,6 @@ export function PreviewScreen({
   return (
     <div className="flex h-screen flex-col bg-slate-50">
       <header className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
-        <button
-          onClick={handleBack}
-          className="rounded-lg p-2 text-slate-600 hover:bg-slate-100"
-          title="رجوع"
-        >
-          <BackIcon />
-        </button>
         <h1 className="flex-1 text-lg font-bold text-slate-900">
           معاينة الترتيب
         </h1>
@@ -240,12 +233,20 @@ function Body({
           <p className="mt-3.5 text-[13px] leading-[1.5] text-slate-700">
             {job.errorMessage ?? "حدث خطأ غير متوقع"}
           </p>
-          <button
-            onClick={onRetryCompute}
-            className="mt-5 rounded-[11px] bg-primary px-5 py-3 text-sm font-semibold text-white"
-          >
-            إعادة المحاولة
-          </button>
+          <div className="mt-5 flex items-center justify-center gap-3">
+            <button
+              onClick={onCancelCompute}
+              className="rounded-[11px] border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700"
+            >
+              إلغاء والعودة
+            </button>
+            <button
+              onClick={onRetryCompute}
+              className="rounded-[11px] bg-primary px-5 py-3 text-sm font-semibold text-white"
+            >
+              إعادة المحاولة
+            </button>
+          </div>
         </div>
       </div>
     );

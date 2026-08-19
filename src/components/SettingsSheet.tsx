@@ -157,7 +157,7 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
                 }`}
               />
               <span className="text-xs font-semibold text-slate-600">
-                رابط السيرفر (ngrok)
+                رابط الباك إند المحلي
               </span>
               <span
                 className={`mr-auto text-[11px] font-semibold ${
@@ -170,13 +170,13 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
             <input
               value={serverUrl}
               onChange={(e) => setServerUrl(e.target.value)}
-              placeholder="https://xxxx-xx-xx-xxx-xx.ngrok-free.app"
+              placeholder="http://127.0.0.1:8000"
               dir="ltr"
               className="mt-2 w-full rounded-[11px] border border-slate-300 bg-white px-3.5 py-3 text-left text-sm text-slate-900 outline-none focus:border-primary"
             />
             <p className="mt-1.5 text-xs leading-snug text-slate-500">
-              الصقه من نافذة السيرفر (PUBLIC API URL) — بيتغيّر كل مرة يُشغَّل
-              السيرفر من جديد.
+              الافتراضي هو <span dir="ltr">http://127.0.0.1:8000</span> عندما
+              تكون الواجهة والـPython على نفس الجهاز. بهذا تظل الصور داخل الجهاز.
             </p>
             <button
               onClick={async () => {
@@ -190,7 +190,7 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
               disabled={savingServerUrl || serverUrl.trim().length === 0}
               className="mt-2.5 w-full rounded-[11px] bg-primary py-2.5 text-xs font-semibold text-white disabled:opacity-50"
             >
-              {savingServerUrl ? "جاري الاتصال..." : "حفظ والاتصال"}
+              {savingServerUrl ? "جاري الاتصال..." : "حفظ والاتصال محليًا"}
             </button>
           </div>
 

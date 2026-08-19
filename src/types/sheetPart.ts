@@ -19,6 +19,8 @@ export interface UploadedPart {
   originalSourcePath?: string;
   /** Raw file bytes, held in memory for thumbnail + multipart upload (web always uses this path — kIsWeb branch in the Dart client). */
   bytes?: Uint8Array;
+  /** Browser File object, kept to defer reading arrayBuffer until upload. */
+  file?: File;
   backendPartId?: string;
   validationStatus: PartValidationStatus;
   rejectionReason?: string;

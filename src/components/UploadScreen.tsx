@@ -2,17 +2,20 @@
 
 /**
  * Web port of frontend/lib/screens/upload_screen.dart.
+ *
+ * Design language: Linear / Stripe — clean, restrained, functional.
+ * No decorative gradients, no emojis, no glassmorphism. Just clean
+ * typography, intentional whitespace, and subtle motion.
  */
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect, useCallback, memo } from "react";
 import { useNestingJobStore } from "@/lib/nestingJobStore";
-import { pickImageFolder } from "@/lib/imageFolderPicker";
+import { isSupportedImageFile, pickImageFolder } from "@/lib/imageFolderPicker";
 import { WorkflowStepper } from "./WorkflowStepper";
 import { SettingsSheet } from "./SettingsSheet";
 import type { UploadedPart } from "@/types/sheetPart";
 
 function fileToUploadedPart(
   file: File,
-  bytes: Uint8Array,
   base: number,
   index: number,
 ): UploadedPart {
@@ -20,7 +23,8 @@ function fileToUploadedPart(
     id: `${base}_${index}_${file.name}`,
     fileName: file.name,
     filePath: "",
-    bytes,
+    file,
+
     validationStatus: "pending",
   };
 }
@@ -29,8 +33,7 @@ async function readFilesAsParts(files: File[]): Promise<UploadedPart[]> {
   const base = Date.now();
   const parts: UploadedPart[] = [];
   for (let i = 0; i < files.length; i++) {
-    const buffer = await files[i].arrayBuffer();
-    parts.push(fileToUploadedPart(files[i], new Uint8Array(buffer), base, i));
+    parts.push(fileToUploadedPart(files[i], base, i));
   }
   return parts;
 }
@@ -51,7 +54,9 @@ export function UploadScreen({ onProceed }: { onProceed: () => void }) {
   const refreshCurrentJob = useNestingJobStore((s) => s.refreshCurrentJob);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragCounterRef = useRef(0);
 
   const valid = job.uploadedParts.filter(
     (p) => p.validationStatus === "valid",
@@ -77,98 +82,194 @@ export function UploadScreen({ onProceed }: { onProceed: () => void }) {
     await addUploadedParts(parts);
   };
 
+  // Drag & drop support
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    if (e.dataTransfer?.types.includes("Files")) setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) setIsDragging(false);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounterRef.current = 0;
+      setIsDragging(false);
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        const imageFiles = Array.from(files).filter(isSupportedImageFile);
+        if (imageFiles.length > 0) {
+          const parts = await readFilesAsParts(imageFiles);
+          await addUploadedParts(parts);
+        }
+      }
+    },
+    [addUploadedParts],
+  );
+
   return (
-    <div className="flex flex-col h-screen bg-slate-50">
-      <header className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
+    <div
+      className="flex flex-col h-screen bg-white"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={(e) => void handleDrop(e)}
+    >
+      {/* ── Drag overlay ── */}
+      {isDragging && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-primary/[0.04] backdrop-blur-[2px]">
+          <div className="rounded-2xl border-2 border-dashed border-primary/40 bg-white px-12 py-10 text-center shadow-xl">
+            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-primary/[0.08]">
+              <ArrowUpIcon className="h-6 w-6 text-primary" />
+            </div>
+            <p className="text-[15px] font-semibold text-slate-900">
+              أفلت الصور هنا
+            </p>
+            <p className="mt-1 text-[12px] text-slate-500">
+              PNG, JPG, TIFF, WebP وغيرها
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Header ── */}
+      <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-5 py-3">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/walid_logo.jpg"
           alt="Walid Logo"
-          className="h-8 w-8 rounded-[8px] object-cover shadow-sm"
+          className="h-8 w-8 rounded-lg object-cover"
         />
-        <h1 className="flex-1 text-lg font-bold text-slate-900">
-          وليد - تجهيز الصور
+        <h1 className="flex-1 text-[16px] font-semibold text-slate-900">
+          وليد
         </h1>
         <ServerBadge reachable={serverReachable} />
         <button
           onClick={() => setSettingsOpen(true)}
-          className="rounded-lg p-2 text-slate-600 hover:bg-slate-100"
+          className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-50 hover:text-slate-600"
           title="إعدادات الشيت"
         >
-          <TuneIcon />
+          <SettingsIcon />
         </button>
       </header>
 
-      <div className="px-5 pt-3 pb-1">
+      {/* ── Stepper ── */}
+      <div className="border-b border-slate-100 px-5 py-2.5">
         <WorkflowStepper currentStage="upload" />
       </div>
 
-      <main className="flex-1 overflow-y-auto px-4 pb-6 pt-2">
-        <HeaderBlock
-          total={job.uploadedParts.length}
-          valid={valid}
-          rejected={rejected}
-          pending={pending}
-        />
-
-        {hasResumableJob && !initializing && (
-          <ResumeBanner
-            total={job.uploadedParts.length}
-            pending={pending}
-            uploading={uploading}
-            onResume={resumePendingUploads}
-          />
-        )}
-
-        <DropCard
-          onPick={() => fileInputRef.current?.click()}
-          onPickFolder={handlePickFolder}
-        />
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => {
-            void handleFilesSelected(e.target.files);
-            e.target.value = "";
-          }}
-        />
-
-        {uploading && <UploadProgressCard progress={uploadProgress} />}
-        {job.errorMessage && <ErrorBanner message={job.errorMessage} />}
-        {rejected > 0 && (
-          <RejectedBanner count={rejected} onRecheck={refreshCurrentJob} />
-        )}
-
-        {job.uploadedParts.length > 0 && (
-          <div className="mt-3.5">
-            <div className="mb-1.5 flex items-center">
-              <span className="flex-1 text-sm font-extrabold text-slate-900">
-                الصور المحددة
+      {/* ── Content ── */}
+      <main className="flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-2xl px-5 py-5">
+          {/* Stats row */}
+          {job.uploadedParts.length > 0 && (
+            <div className="mb-4 flex items-center gap-4 text-[12px] text-slate-500">
+              <span>
+                <span className="font-semibold text-slate-900">
+                  {job.uploadedParts.length}
+                </span>{" "}
+                صورة
               </span>
-              <button
-                onClick={() => clearAllParts()}
-                disabled={uploading}
-                className="flex items-center gap-1 text-xs font-semibold text-primary disabled:opacity-40"
-              >
-                مسح الكل
-              </button>
+              {valid > 0 && (
+                <span className="flex items-center gap-1">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-success" />
+                  <span className="font-semibold text-success">{valid}</span>{" "}
+                  صالحة
+                </span>
+              )}
+              {pending > 0 && (
+                <span className="flex items-center gap-1">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-info" />
+                  <span className="font-semibold text-info">{pending}</span>{" "}
+                  قيد الفحص
+                </span>
+              )}
+              {rejected > 0 && (
+                <span className="flex items-center gap-1">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-danger" />
+                  <span className="font-semibold text-danger">{rejected}</span>{" "}
+                  مرفوضة
+                </span>
+              )}
             </div>
-            <div className="space-y-2">
-              {job.uploadedParts.map((part) => (
-                <PartCard
-                  key={part.id}
-                  part={part}
-                  onRemove={() => removeUploadedPart(part.id)}
-                />
-              ))}
+          )}
+
+          {hasResumableJob && !initializing && (
+            <ResumeBanner
+              total={job.uploadedParts.length}
+              pending={pending}
+              uploading={uploading}
+              onResume={resumePendingUploads}
+            />
+          )}
+
+          {/* Upload zone */}
+          <DropZone
+            onPick={() => fileInputRef.current?.click()}
+            onPickFolder={handlePickFolder}
+            hasImages={job.uploadedParts.length > 0}
+          />
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*,.avif,.bmp,.heic,.heif,.tif,.tiff,.webp"
+            className="hidden"
+            onChange={(e) => {
+              void handleFilesSelected(e.target.files);
+              e.target.value = "";
+            }}
+          />
+
+          {uploading && <UploadProgressBar progress={uploadProgress} />}
+          {job.errorMessage && <ErrorNotice message={job.errorMessage} />}
+          {rejected > 0 && (
+            <RejectedNotice count={rejected} onRecheck={refreshCurrentJob} />
+          )}
+
+          {/* File list */}
+          {job.uploadedParts.length > 0 && (
+            <div className="mt-5">
+              <div className="mb-2.5 flex items-center justify-between">
+                <h3 className="text-[13px] font-semibold text-slate-900">
+                  الملفات
+                </h3>
+                <button
+                  onClick={() => clearAllParts()}
+                  disabled={uploading}
+                  className="text-[11px] font-medium text-slate-400 transition-colors hover:text-danger disabled:opacity-30"
+                >
+                  مسح الكل
+                </button>
+              </div>
+              <div className="divide-y divide-slate-100 rounded-xl border border-slate-200">
+                {job.uploadedParts.map((part) => (
+                  <PartRow
+                    key={part.id}
+                    part={part}
+                    onRemove={removeUploadedPart}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </main>
 
+      {/* ── Bottom ── */}
       <BottomBar
         total={job.uploadedParts.length}
         canProceed={canProceed}
@@ -182,23 +283,30 @@ export function UploadScreen({ onProceed }: { onProceed: () => void }) {
   );
 }
 
-function TuneIcon() {
+/* ═══════════════════════════════════════════════════════════════════════ */
+/*  Icons                                                                */
+/* ═══════════════════════════════════════════════════════════════════════ */
+
+function SettingsIcon() {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      className="h-5 w-5"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M4 6h10M4 12h16M4 18h10M18 4v4M10 10v4"
-      />
+    <svg viewBox="0 0 20 20" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth={1.5}>
+      <circle cx="10" cy="10" r="3" />
+      <path d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M3.4 3.4l1.4 1.4M15.2 15.2l1.4 1.4M3.4 16.6l1.4-1.4M15.2 4.8l1.4-1.4" strokeLinecap="round" />
     </svg>
   );
 }
+
+function ArrowUpIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5m0 0l-6 6m6-6l6 6" />
+    </svg>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════ */
+/*  Server Badge                                                         */
+/* ═══════════════════════════════════════════════════════════════════════ */
 
 // Tailwind's JIT compiler statically scans source for literal class strings
 // at build time; a template literal like `text-${color}` is invisible to
@@ -232,65 +340,9 @@ function ServerBadge({ reachable }: { reachable: boolean }) {
   );
 }
 
-function HeaderBlock({
-  total,
-  valid,
-  rejected,
-  pending,
-}: {
-  total: number;
-  valid: number;
-  rejected: number;
-  pending: number;
-}) {
-  return (
-    <div className="rounded-[14px] border border-slate-200 bg-white p-4 shadow-[0_1px_2px_var(--card-shadow)]">
-      <h2 className="text-[19px] font-extrabold text-slate-900">
-        يا وليد، جاهز لترتيب الشيت؟
-      </h2>
-      <p className="mt-[5px] text-[12.5px] leading-[1.5] text-slate-500">
-        ارفع صورك بأي صيغة: PNG أو JPG أو JPEG أو WebP أو TIFF وغيرها. السيرفر
-        يجهزها تلقائيًا ويحلل الـcontour قبل الترتيب.
-      </p>
-      <div className="mt-3.5 flex flex-wrap gap-2">
-        <MetricChip label={`${total} صورة`} color="slate" />
-        <MetricChip label={`${valid} صالحة`} color="success" />
-        {pending > 0 && (
-          <MetricChip label={`${pending} قيد الفحص`} color="info" />
-        )}
-        {rejected > 0 && (
-          <MetricChip label={`${rejected} مرفوضة`} color="danger" />
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Same static-scan issue as SERVER_BADGE_STYLES above -- every combination
-// this component actually renders is spelled out here as a whole literal
-// class string so Tailwind's compiler can find and keep it.
-const METRIC_CHIP_STYLES = {
-  slate: "text-slate-700 border-slate-700/[0.16] bg-slate-700/[0.07]",
-  success: "text-success border-success/[0.16] bg-success/[0.07]",
-  info: "text-info border-info/[0.16] bg-info/[0.07]",
-  danger: "text-danger border-danger/[0.16] bg-danger/[0.07]",
-} as const;
-
-function MetricChip({
-  label,
-  color,
-}: {
-  label: string;
-  color: keyof typeof METRIC_CHIP_STYLES;
-}) {
-  return (
-    <span
-      className={`rounded-[9px] border px-2.5 py-1.5 text-[11.5px] font-bold ${METRIC_CHIP_STYLES[color]}`}
-    >
-      {label}
-    </span>
-  );
-}
+/* ═══════════════════════════════════════════════════════════════════════ */
+/*  Resume Banner                                                        */
+/* ═══════════════════════════════════════════════════════════════════════ */
 
 function ResumeBanner({
   total,
@@ -305,37 +357,27 @@ function ResumeBanner({
 }) {
   const done = total - pending;
   return (
-    <div className="mt-3 flex items-start gap-[11px] rounded-[14px] bg-info/[0.06] p-3.5">
-      <div className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl bg-info/[0.12] text-info">
-        <svg
-          viewBox="0 0 24 24"
-          className="h-5 w-5"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M4 4v6h6M20 20v-6h-6M4 10a8 8 0 0114-5M20 14a8 8 0 01-14 5"
-          />
+    <div className="mb-4 flex items-center gap-3 rounded-xl border border-info/20 bg-info/[0.04] p-3.5">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-info/10 text-info">
+        <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v5h5M17 17v-5h-5M3 8a7 7 0 0112.3-4.3M17 12a7 7 0 01-12.3 4.3" />
         </svg>
       </div>
-      <div className="flex-1">
-        <p className="text-[13px] font-extrabold text-slate-900">
-          مهمة محفوظة — يمكن الاستكمال بأمان
+      <div className="flex-1 min-w-0">
+        <p className="text-[12.5px] font-semibold text-slate-900">
+          مهمة محفوظة — يمكن الاستكمال
         </p>
-        <p className="mt-1 text-[11.5px] leading-[1.45] text-slate-600">
+        <p className="mt-0.5 text-[11px] text-slate-500">
           {pending > 0
-            ? `تم حفظ وتحليل ${done} من ${total} صورة. المتبقي ${pending} صورة، والاستكمال يتم من آخر نقطة محفوظة.`
-            : "كل الصور محفوظة على السيرفر ويمكن متابعة الخطوة التالية بدون إعادة الرفع."}
+            ? `تم ${done} من ${total}. المتبقي ${pending} صورة.`
+            : "كل الصور محفوظة."}
         </p>
       </div>
       {pending > 0 && (
         <button
           onClick={() => void onResume()}
           disabled={uploading}
-          className="shrink-0 rounded-[11px] bg-info/[0.15] px-3.5 py-2 text-[13px] font-semibold text-info disabled:opacity-50"
+          className="shrink-0 rounded-lg bg-info px-3.5 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-info/90 disabled:opacity-50"
         >
           {uploading ? "جاري..." : "استكمال"}
         </button>
@@ -344,86 +386,133 @@ function ResumeBanner({
   );
 }
 
-function DropCard({
+/* ═══════════════════════════════════════════════════════════════════════ */
+/*  Drop Zone                                                            */
+/* ═══════════════════════════════════════════════════════════════════════ */
+
+function DropZone({
   onPick,
   onPickFolder,
+  hasImages,
 }: {
   onPick: () => void;
   onPickFolder: () => void;
+  hasImages: boolean;
 }) {
-  return (
-    <button
-      onClick={onPick}
-      className="mt-3.5 flex w-full flex-col items-center rounded-[18px] border border-primary/[0.22] bg-primary/[0.035] px-5 py-6.5 text-center transition-colors hover:bg-primary/[0.06]"
-    >
-      <div className="flex h-[58px] w-[58px] items-center justify-center rounded-full bg-primary/[0.10] text-primary">
-        <svg
-          viewBox="0 0 24 24"
-          className="h-7 w-7"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.6}
+  if (hasImages) {
+    // Compact version when images already exist
+    return (
+      <div className="flex gap-2">
+        <button
+          onClick={onPick}
+          className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 py-3 text-[12px] font-medium text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 hover:bg-slate-50"
         >
-          <rect x="3" y="5" width="18" height="14" rx="2" />
-          <circle cx="9" cy="11" r="1.6" />
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M4 17l4.5-4 3.5 3 3-3L20 17"
-          />
-          <path strokeLinecap="round" d="M18 3v4M16 5h4" />
-        </svg>
+          <ArrowUpIcon className="h-3.5 w-3.5" />
+          إضافة صور
+        </button>
+        <button
+          onClick={onPickFolder}
+          className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 py-3 text-[12px] font-medium text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 hover:bg-slate-50"
+        >
+          <FolderIcon className="h-3.5 w-3.5" />
+          إضافة مجلد
+        </button>
       </div>
-      <p className="mt-3 text-[15px] font-extrabold text-slate-900">
-        اختيار الصور
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/50 px-6 py-12 text-center transition-colors hover:border-slate-300 hover:bg-slate-50">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+        <ArrowUpIcon className="h-5 w-5" />
+      </div>
+      <p className="text-[14px] font-semibold text-slate-900">
+        اسحب الصور هنا أو اختر من جهازك
       </p>
-      <p className="mt-[5px] text-xs text-slate-500">
-        يمكنك اختيار عشرات الصور في دفعة واحدة
+      <p className="mt-1.5 text-[12px] text-slate-400">
+        PNG, JPG, TIFF, WebP وغيرها — تُنسخ محليًا إلى Python على هذا الجهاز فقط
       </p>
-      <div className="mt-3.5 flex flex-wrap justify-center gap-2">
-        <span className="rounded-[11px] border border-slate-300 px-5 py-3.5 text-sm font-semibold text-slate-700">
+      <div className="mt-5 flex justify-center gap-3">
+        <button
+          onClick={onPick}
+          className="rounded-lg bg-primary px-4 py-2 text-[12.5px] font-semibold text-white transition-colors hover:bg-primary-dark"
+        >
           اختيار صور
-        </span>
-        <span
-          onClick={(e) => {
-            e.stopPropagation();
-            onPickFolder();
-          }}
-          className="rounded-[11px] border border-slate-300 px-5 py-3.5 text-sm font-semibold text-slate-700"
+        </button>
+        <button
+          onClick={onPickFolder}
+          className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-[12.5px] font-semibold text-slate-700 transition-colors hover:bg-slate-50"
         >
           اختيار مجلد
-        </span>
+        </button>
       </div>
-    </button>
+    </div>
   );
 }
 
-function PartCard({
+function FolderIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 20 20" className={className} fill="none" stroke="currentColor" strokeWidth={1.6}>
+      <path d="M2 6a2 2 0 012-2h3.172a2 2 0 011.414.586l.828.828A2 2 0 0010.828 6H16a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+    </svg>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════ */
+/*  Part Row                                                             */
+/* ═══════════════════════════════════════════════════════════════════════ */
+
+const PartRow = memo(function PartRow({
   part,
   onRemove,
 }: {
   part: UploadedPart;
-  onRemove: () => void;
+  onRemove: (id: string) => void;
 }) {
-  const statusColorClass =
-    part.validationStatus === "valid"
-      ? "text-success"
-      : part.validationStatus === "rejected"
-        ? "text-danger"
-        : "text-info";
-  const statusText =
-    part.validationStatus === "valid"
-      ? "تم التحقق — جاهزة للـnesting"
-      : part.validationStatus === "rejected"
-        ? (part.rejectionReason ?? "تم رفض الصورة")
-        : "جاري إرسالها وتحليلها...";
-  const thumbUrl = part.bytes
-    ? URL.createObjectURL(new Blob([new Uint8Array(part.bytes)]))
-    : null;
+  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let target: Blob | null = part.file ?? null;
+    if (!target && part.bytes) {
+      target = new Blob([new Uint8Array(part.bytes)]);
+    }
+    if (!target) {
+      setThumbUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(target);
+    setThumbUrl(url);
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [part.bytes, part.file]);
+
+  const statusEl =
+    part.validationStatus === "valid" ? (
+      <span className="flex items-center gap-1 text-[10.5px] font-medium text-success">
+        <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4 8.5l2.5 2.5L12 5" />
+        </svg>
+        جاهزة
+      </span>
+    ) : part.validationStatus === "rejected" ? (
+      <span className="flex items-center gap-1 text-[10.5px] font-medium text-danger">
+        <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" d="M5 5l6 6M11 5l-6 6" />
+        </svg>
+        {part.rejectionReason ?? "مرفوضة"}
+      </span>
+    ) : (
+      <span className="flex items-center gap-1.5 text-[10.5px] font-medium text-slate-400">
+        <span className="inline-block h-3 w-3 animate-spin rounded-full border-[1.5px] border-slate-300 border-t-primary" />
+        جاري النسخ والفحص محليًا
+      </span>
+    );
 
   return (
-    <div className="flex items-center gap-2.5 rounded-[14px] border border-slate-200 bg-white p-2.5 shadow-[0_1px_2px_var(--card-shadow)]">
-      <div className="h-[58px] w-[58px] shrink-0 overflow-hidden rounded-[11px] border border-slate-200 bg-slate-100">
+    <div className="group flex items-center gap-3 px-3.5 py-2.5 transition-colors hover:bg-slate-50">
+      {/* Thumbnail */}
+      <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-slate-100">
         {thumbUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -432,69 +521,69 @@ function PartCard({
             className="h-full w-full object-cover"
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center text-slate-400">
-            <svg
-              viewBox="0 0 24 24"
-              className="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.5}
-            >
-              <rect x="3" y="5" width="18" height="14" rx="2" />
+          <div className="flex h-full w-full items-center justify-center text-slate-300">
+            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.5}>
+              <rect x="3" y="4" width="14" height="12" rx="1.5" />
+              <circle cx="7.5" cy="8.5" r="1.5" />
+              <path strokeLinecap="round" d="M3 14l4-4 3 3 2.5-2.5L17 14" />
             </svg>
           </div>
         )}
       </div>
+
+      {/* Name + status */}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[13px] font-bold text-slate-900">
+        <p className="truncate text-[12px] font-medium text-slate-800">
           {part.fileName}
         </p>
-        <p
-          className={`mt-1 truncate text-[11.2px] font-semibold ${statusColorClass}`}
-        >
-          {statusText}
-        </p>
+        <div className="mt-0.5">{statusEl}</div>
       </div>
+
+      {/* Remove */}
       <button
-        onClick={onRemove}
-        className="shrink-0 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
-        title="حذف الصورة"
+        onClick={() => onRemove(part.id)}
+        className="shrink-0 rounded-md p-1 text-slate-300 opacity-0 transition-all group-hover:opacity-100 hover:bg-slate-100 hover:text-slate-500"
+        title="حذف"
       >
-        <svg
-          viewBox="0 0 24 24"
-          className="h-5 w-5"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M6 6l12 12M18 6L6 18"
-          />
+        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" d="M4 4l8 8M12 4l-8 8" />
         </svg>
       </button>
     </div>
   );
-}
+});
 
-function UploadProgressCard({ progress }: { progress: number }) {
+/* ═══════════════════════════════════════════════════════════════════════ */
+/*  Upload Progress                                                      */
+/* ═══════════════════════════════════════════════════════════════════════ */
+
+function UploadProgressBar({ progress }: { progress: number }) {
+  const pct = Math.round(progress * 100);
   return (
-    <div className="mt-3 flex items-center gap-2.5 rounded-[14px] bg-info/[0.05] p-3.5">
-      <div className="h-[18px] w-[18px] shrink-0 animate-spin rounded-full border-2 border-info border-t-transparent" />
-      <p className="flex-1 text-[12.5px] font-bold text-slate-900">
-        جاري رفع الصور وتجهيزها وتحليل الـcontour...
-      </p>
-      {progress > 0 && progress < 1 && (
-        <span className="text-xs font-extrabold text-slate-900">
-          {Math.round(progress * 100)}%
+    <div className="mt-3">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-[11px] font-medium text-slate-500">
+          جاري الرفع والتحليل...
         </span>
-      )}
+        <span className="text-[11px] font-semibold text-slate-700">
+          {pct}%
+        </span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+        <div
+          className="h-full rounded-full bg-primary transition-all duration-500 ease-out"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
     </div>
   );
 }
 
-function RejectedBanner({
+/* ═══════════════════════════════════════════════════════════════════════ */
+/*  Notices                                                              */
+/* ═══════════════════════════════════════════════════════════════════════ */
+
+function RejectedNotice({
   count,
   onRecheck,
 }: {
@@ -502,54 +591,35 @@ function RejectedBanner({
   onRecheck: () => void;
 }) {
   return (
-    <div className="mt-3 rounded-xl border border-danger/[0.22] bg-danger/[0.06] p-3.5">
-      <div className="flex items-center gap-2.5">
-        <svg
-          viewBox="0 0 24 24"
-          className="h-[19px] w-[19px] shrink-0 text-danger"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
-          />
-        </svg>
-        <p className="flex-1 text-xs font-bold text-danger">
-          {count} صورة تحتاج إعادة فحص بعد التحديث.
-        </p>
-      </div>
+    <div className="mt-3 flex items-center gap-2.5 rounded-lg border border-danger/15 bg-danger/[0.03] px-3.5 py-2.5">
+      <span className="inline-block h-1.5 w-1.5 rounded-full bg-danger" />
+      <p className="flex-1 text-[11.5px] text-slate-700">
+        <span className="font-semibold text-danger">{count}</span> صورة مرفوضة
+      </p>
       <button
         onClick={() => void onRecheck()}
-        className="mt-1.5 text-[13px] font-semibold text-primary"
+        className="text-[11px] font-semibold text-primary hover:underline"
       >
-        إعادة الفحص الآن
+        إعادة الفحص
       </button>
     </div>
   );
 }
 
-function ErrorBanner({ message }: { message: string }) {
+function ErrorNotice({ message }: { message: string }) {
   return (
-    <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-warning/[0.24] bg-warning/[0.07] p-3.5">
-      <svg
-        viewBox="0 0 24 24"
-        className="h-[19px] w-[19px] shrink-0 text-warning"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={2}
-      >
-        <circle cx="12" cy="12" r="9" />
-        <path strokeLinecap="round" d="M12 8v5M12 16h.01" />
-      </svg>
-      <p className="flex-1 text-[12.2px] leading-[1.45] text-slate-700">
+    <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-warning/15 bg-warning/[0.03] px-3.5 py-2.5">
+      <span className="mt-0.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-warning" />
+      <p className="flex-1 text-[11.5px] leading-relaxed text-slate-600">
         {message}
       </p>
     </div>
   );
 }
+
+/* ═══════════════════════════════════════════════════════════════════════ */
+/*  Bottom Bar                                                           */
+/* ═══════════════════════════════════════════════════════════════════════ */
 
 function BottomBar({
   total,
@@ -565,18 +635,18 @@ function BottomBar({
   onProceed: () => void;
 }) {
   return (
-    <div className="flex items-center gap-2.5 border-t border-slate-200 bg-slate-50 px-4 py-3 shadow-[0_-4px_14px_var(--card-shadow)]">
+    <div className="flex items-center gap-3 border-t border-slate-200 bg-white px-5 py-3">
       <button
         onClick={onAddMore}
         disabled={busy}
-        className="rounded-[11px] border border-slate-300 px-5 py-3.5 text-sm font-semibold text-slate-700 disabled:opacity-40"
+        className="rounded-lg border border-slate-200 px-4 py-2.5 text-[12.5px] font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-30"
       >
-        إضافة
+        إضافة صور
       </button>
       <button
         onClick={onProceed}
         disabled={!canProceed || busy}
-        className="flex-1 rounded-[11px] bg-primary px-5 py-3.5 text-sm font-semibold text-white disabled:bg-slate-300 disabled:text-slate-500"
+        className="flex-1 rounded-lg bg-primary px-4 py-2.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-primary-dark disabled:bg-slate-200 disabled:text-slate-400"
       >
         {total > 0 ? `بدء ترتيب ${total} صورة` : "ابدأ بإضافة الصور"}
       </button>

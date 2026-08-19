@@ -106,11 +106,11 @@ let api = new NestingApiClient();
 let uploadQueue: Promise<void> = Promise.resolve();
 const persistence = JobPersistence;
 
-let progressAbortController: AbortController | null = null;
 let progressStreamGeneration = 0;
+let progressCancelFn: (() => void) | null = null;
 let progressStreamReconnectAttempts = 0;
 
-const UPLOAD_BATCH_SIZE = 1;
+const UPLOAD_BATCH_SIZE = 5;
 const UPLOAD_RETRY_COUNT = 3;
 
 function delay(ms: number): Promise<void> {
@@ -168,6 +168,7 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
     if (typeof window !== "undefined") {
       try {
         window.localStorage.setItem("serverUrl", normalized);
+        window.localStorage.setItem("serverUrlExplicit", "true");
       } catch {
         // best-effort only
       }
@@ -223,8 +224,7 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
 
   checkServer: async () => {
     try {
-      const discoveredUrl = await api.healthCheck();
-      if (discoveredUrl != null) applyDiscoveredServerUrl(discoveredUrl);
+      await api.healthCheck();
       set({ serverReachable: true });
     } catch {
       set({ serverReachable: false });
@@ -272,13 +272,7 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
       try {
         await api.deleteJobPart(remoteJob, target.id);
       } catch (error) {
-        set((state) => ({
-          job: {
-            ...state.job,
-            errorMessage: `تعذر حذف الصورة من السيرفر، لذلك لم يتم حذفها محليًا: ${error}`,
-          },
-        }));
-        return;
+        console.warn(`Failed to delete part from server, but removing locally anyway: ${error}`);
       }
     }
     set((state) => ({
@@ -302,18 +296,7 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
       try {
         await api.deleteJob(remoteJob);
       } catch (error) {
-        // The job may already be gone on the server (deleted before, or
-        // expired): nothing to actually delete, so clear locally instead of
-        // surfacing an error, mirroring the Dart client's 404 tolerance.
-        if (!(error instanceof ApiException) || error.statusCode !== 404) {
-          set((state) => ({
-            job: {
-              ...state.job,
-              errorMessage: `تعذر حذف الـjob من السيرفر: ${error}`,
-            },
-          }));
-          return;
-        }
+        console.warn(`Failed to delete job from server, but clearing locally anyway: ${error}`);
       }
     }
     stopProgressStreaming();
@@ -563,36 +546,32 @@ type Getter = () => NestingJobState;
 // reactive `jobId` in the store stays in sync via every call site below.
 let moduleJobId: string | null = null;
 
-/**
- * Adopts an auto-discovered ngrok URL (found by NestingApiClient.healthCheck
- * after the previously saved URL stopped responding) as the client's base
- * URL going forward, and persists it exactly like a manual updateServerUrl
- * save would -- so the next reload/tab starts from the URL that's actually
- * live instead of rediscovering it every time. Deliberately does NOT call
- * checkServer() again: the caller already confirmed this exact URL just
- * answered /health successfully in the same round trip.
- */
-function applyDiscoveredServerUrl(discoveredUrl: string): void {
-  api = new NestingApiClient(discoveredUrl);
-  if (typeof window !== "undefined") {
-    try {
-      window.localStorage.setItem("serverUrl", discoveredUrl);
-    } catch {
-      // best-effort only
-    }
-  }
-}
-
 async function loadSettings(set: Setter): Promise<void> {
   if (typeof window === "undefined") return;
   let serverUrl: string | null = null;
+  let isExplicitServerChoice = false;
   try {
     serverUrl = window.localStorage.getItem("serverUrl");
+    isExplicitServerChoice =
+      window.localStorage.getItem("serverUrlExplicit") === "true";
   } catch {
     // best-effort only
   }
-  if (serverUrl != null && serverUrl.trim().length > 0) {
+  if (
+    serverUrl != null &&
+    serverUrl.trim().length > 0 &&
+    isExplicitServerChoice
+  ) {
     api = new NestingApiClient(serverUrl);
+  } else if (serverUrl != null && serverUrl.trim().length > 0) {
+    // Previous versions persisted an automatically generated ngrok URL.
+    // It points outside this device and becomes invalid after a restart, so
+    // never let that legacy value override the local backend.
+    try {
+      window.localStorage.removeItem("serverUrl");
+    } catch {
+      // best-effort only
+    }
   }
 
   const prefs = window.localStorage;
@@ -662,7 +641,8 @@ async function prepareAndUpload(
     for (const part of parts) {
       if (part.bytes != null) {
         inMemoryBytes.set(part.id, part.bytes);
-        await persistence.stageFile(jobId, part.id, part.bytes);
+      } else if (part.file != null) {
+        // We will read arrayBuffer dynamically during upload to save memory
       }
       staged.push(part);
     }
@@ -724,23 +704,60 @@ async function uploadWithRetry(
   for (let attempt = 1; attempt <= UPLOAD_RETRY_COUNT; attempt++) {
     try {
       const payloads: UploadPayload[] = [];
+      const readableIds: string[] = [];
+      const unreadableIds = new Set<string>();
+
       for (const part of parts) {
-        const bytes =
-          part.bytes ??
-          inMemoryBytes.get(part.id) ??
-          (await persistence.getStagedFile(jobId, part.id)) ??
-          undefined;
-        if (bytes == null) {
-          throw new ApiException(`تعذر قراءة الملف: ${part.fileName}`);
+        let bytes = part.bytes ?? inMemoryBytes.get(part.id);
+        
+        if (bytes == null && part.file != null) {
+          bytes = new Uint8Array(await part.file.arrayBuffer());
+          inMemoryBytes.set(part.id, bytes);
+          persistence.stageFile(jobId, part.id, bytes).catch((e) => {
+            console.warn(`Failed to stage file to IndexedDB, but continuing upload:`, e);
+          });
         }
-        payloads.push({ fileName: part.fileName, bytes });
+        
+        if (bytes == null) {
+          bytes = (await persistence.getStagedFile(jobId, part.id)) ?? undefined;
+          if (bytes != null) {
+            inMemoryBytes.set(part.id, bytes);
+          }
+        }
+        
+        if (bytes == null) {
+          unreadableIds.add(part.id);
+        } else {
+          payloads.push({ fileName: part.fileName, bytes });
+          readableIds.push(part.id);
+        }
+      }
+
+      if (unreadableIds.size > 0) {
+        set((state) => ({
+          job: {
+            ...state.job,
+            uploadedParts: state.job.uploadedParts.map((p) => {
+              if (!unreadableIds.has(p.id)) return p;
+              return {
+                ...p,
+                validationStatus: "rejected",
+                rejectionReason: "فقد المتصفح بيانات هذا الملف بسبب التحديث. يرجى إزالته وإعادة إضافته.",
+              };
+            }),
+          },
+        }));
+      }
+
+      if (payloads.length === 0) {
+        return;
       }
 
       const dpi = get().job.settings.dpi;
       const data = await api.uploadImages({
         files: payloads,
-        clientPartIds: parts.map((p) => p.id),
-        originalSourcePaths: parts.map((p) => p.originalSourcePath),
+        clientPartIds: readableIds,
+        originalSourcePaths: parts.filter((p) => readableIds.includes(p.id)).map((p) => p.originalSourcePath),
         dpi,
         jobId,
         onProgress: (sent, total) => {
@@ -1052,11 +1069,12 @@ function resetProgress(set: Setter): void {
 
 function stopProgressStreaming(): void {
   // Bumping the generation makes late callbacks from an old connection
-  // harmless; aborting closes the single SSE fetch.
+  // harmless; canceling the reader closes the single SSE fetch cleanly.
   progressStreamGeneration++;
-  const controller = progressAbortController;
-  progressAbortController = null;
-  controller?.abort();
+  if (progressCancelFn) {
+    progressCancelFn();
+    progressCancelFn = null;
+  }
 }
 
 function startProgressStreaming(
@@ -1078,14 +1096,14 @@ async function openProgressStream(
 ): Promise<void> {
   if (generation !== progressStreamGeneration) return;
 
-  const controller = new AbortController();
-  progressAbortController = controller;
   let receivedTerminalEvent = false;
 
   try {
     for await (const data of api.streamLayoutProgress(
       jobId,
-      controller.signal,
+      (cancelFn) => {
+        progressCancelFn = cancelFn;
+      },
     )) {
       if (generation !== progressStreamGeneration) return;
       const done = asInt(data.done);
@@ -1110,6 +1128,7 @@ async function openProgressStream(
     if (!receivedTerminalEvent)
       reconnectProgressStream(set, jobId, generation, target);
   } catch {
+    if (generation !== progressStreamGeneration) return; // ignore intentional aborts
     if (!receivedTerminalEvent) {
       set({
         serverReachable: false,

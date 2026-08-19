@@ -25,7 +25,10 @@ const IMAGE_EXTENSIONS = new Set([
   ".webp",
 ]);
 
-function hasImageExtension(fileName: string): boolean {
+export function isSupportedImageFile(file: File): boolean {
+  // Some browsers report an empty MIME type for TIFF/HEIC despite supporting
+  // the file chooser. The filename is therefore the reliable check.
+  const fileName = file.name;
   const lower = fileName.toLowerCase();
   for (const ext of IMAGE_EXTENSIONS) {
     if (lower.endsWith(ext)) return true;
@@ -38,9 +41,18 @@ function hasImageExtension(fileName: string): boolean {
  * raster-image files found inside (sorted by name, matching the Dart
  * client's case-insensitive sort). Resolves to an empty array if the user
  * cancels the picker.
+ *
+ * BUG FIX: The previous 300ms focus-timeout was too short. When the user
+ * selects a folder with many files, Chrome/Safari shows a secondary
+ * confirmation dialog ("Upload N files to this site?"). The window regains
+ * focus between the folder picker closing and the confirmation appearing,
+ * causing the focus handler to fire and resolve([]). Increasing the timeout
+ * to 2000ms gives the browser enough time to show its confirmation and
+ * wait for the user to click Upload/Cancel.
  */
 export function pickImageFolder(): Promise<File[]> {
   return new Promise((resolve) => {
+    let resolved = false;
     const input = document.createElement("input");
     input.type = "file";
     input.multiple = true;
@@ -53,9 +65,9 @@ export function pickImageFolder(): Promise<File[]> {
     input.addEventListener(
       "change",
       () => {
-        const files = Array.from(input.files ?? []).filter((file) =>
-          hasImageExtension(file.name),
-        );
+        if (resolved) return;
+        resolved = true;
+        const files = Array.from(input.files ?? []).filter(isSupportedImageFile);
         files.sort((a, b) =>
           a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
         );
@@ -67,15 +79,20 @@ export function pickImageFolder(): Promise<File[]> {
     // A picker the user dismisses without choosing anything never fires
     // `change`; `focus` returning to the page is the closest cross-browser
     // signal that the dialog closed, so we resolve empty shortly after.
+    // The timeout must be long enough (2s) to survive Chrome/Safari's
+    // secondary "Upload N files?" confirmation dialog — the window gets a
+    // brief `focus` flash between the folder picker closing and that
+    // confirmation appearing, which at 300ms was enough to kill the pick.
     window.addEventListener(
       "focus",
       () => {
         setTimeout(() => {
-          if (document.body.contains(input)) {
+          if (!resolved && document.body.contains(input)) {
+            resolved = true;
             input.remove();
             resolve([]);
           }
-        }, 300);
+        }, 2000);
       },
       { once: true },
     );
