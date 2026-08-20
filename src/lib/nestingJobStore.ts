@@ -272,7 +272,9 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
       try {
         await api.deleteJobPart(remoteJob, target.id);
       } catch (error) {
-        console.warn(`Failed to delete part from server, but removing locally anyway: ${error}`);
+        console.warn(
+          `Failed to delete part from server, but removing locally anyway: ${error}`,
+        );
       }
     }
     set((state) => ({
@@ -296,7 +298,9 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
       try {
         await api.deleteJob(remoteJob);
       } catch (error) {
-        console.warn(`Failed to delete job from server, but clearing locally anyway: ${error}`);
+        console.warn(
+          `Failed to delete job from server, but clearing locally anyway: ${error}`,
+        );
       }
     }
     stopProgressStreaming();
@@ -709,22 +713,26 @@ async function uploadWithRetry(
 
       for (const part of parts) {
         let bytes = part.bytes ?? inMemoryBytes.get(part.id);
-        
+
         if (bytes == null && part.file != null) {
           bytes = new Uint8Array(await part.file.arrayBuffer());
           inMemoryBytes.set(part.id, bytes);
           persistence.stageFile(jobId, part.id, bytes).catch((e) => {
-            console.warn(`Failed to stage file to IndexedDB, but continuing upload:`, e);
+            console.warn(
+              `Failed to stage file to IndexedDB, but continuing upload:`,
+              e,
+            );
           });
         }
-        
+
         if (bytes == null) {
-          bytes = (await persistence.getStagedFile(jobId, part.id)) ?? undefined;
+          bytes =
+            (await persistence.getStagedFile(jobId, part.id)) ?? undefined;
           if (bytes != null) {
             inMemoryBytes.set(part.id, bytes);
           }
         }
-        
+
         if (bytes == null) {
           unreadableIds.add(part.id);
         } else {
@@ -742,7 +750,8 @@ async function uploadWithRetry(
               return {
                 ...p,
                 validationStatus: "rejected",
-                rejectionReason: "فقد المتصفح بيانات هذا الملف بسبب التحديث. يرجى إزالته وإعادة إضافته.",
+                rejectionReason:
+                  "فقد المتصفح بيانات هذا الملف بسبب التحديث. يرجى إزالته وإعادة إضافته.",
               };
             }),
           },
@@ -757,7 +766,9 @@ async function uploadWithRetry(
       const data = await api.uploadImages({
         files: payloads,
         clientPartIds: readableIds,
-        originalSourcePaths: parts.filter((p) => readableIds.includes(p.id)).map((p) => p.originalSourcePath),
+        originalSourcePaths: parts
+          .filter((p) => readableIds.includes(p.id))
+          .map((p) => p.originalSourcePath),
         dpi,
         jobId,
         onProgress: (sent, total) => {
@@ -1099,12 +1110,9 @@ async function openProgressStream(
   let receivedTerminalEvent = false;
 
   try {
-    for await (const data of api.streamLayoutProgress(
-      jobId,
-      (cancelFn) => {
-        progressCancelFn = cancelFn;
-      },
-    )) {
+    for await (const data of api.streamLayoutProgress(jobId, (cancelFn) => {
+      progressCancelFn = cancelFn;
+    })) {
       if (generation !== progressStreamGeneration) return;
       const done = asInt(data.done);
       const total = asInt(data.total);
@@ -1189,6 +1197,22 @@ async function tryRecoverCompletedCompute(
   return false;
 }
 
+// Parses PlacedPartPreview.contour_mm (backend api/schemas.py) into the
+// frontend's ContourPointMm[] shape. Requires at least 3 points -- fewer
+// cannot form a closed polygon SheetLayoutCanvas can draw -- so a malformed
+// or (from an older cached job) absent field falls back to the synthesized
+// bounding-box rectangle below rather than rendering a degenerate shape.
+function parseContourMm(value: unknown): { x: number; y: number }[] | null {
+  if (!Array.isArray(value) || value.length < 3) return null;
+  const points: { x: number; y: number }[] = [];
+  for (const entry of value) {
+    if (entry == null || typeof entry !== "object") return null;
+    const record = entry as Record<string, unknown>;
+    points.push({ x: asDouble(record.x_mm), y: asDouble(record.y_mm) });
+  }
+  return points;
+}
+
 function decodePlaced(
   get: Getter,
   source: Record<string, unknown>[],
@@ -1202,10 +1226,18 @@ function decodePlaced(
     const minY = asDouble(item.bounds_min_y_mm);
     const maxX = asDouble(item.bounds_max_x_mm);
     const maxY = asDouble(item.bounds_max_y_mm);
+    // Prefer the backend's real placed_shape_mm exterior ring (exact,
+    // possibly irregular contour) over the synthesized axis-aligned
+    // rectangle. The rectangle fallback stays exactly as it was (and is what
+    // renders for a job computed before this field existed, since the
+    // backend response then simply omits contour_mm), so this is additive:
+    // any client -- old or new -- talking to any backend -- old or new --
+    // still gets a renderable contour, real shape when available.
+    const realContour = parseContourMm(item.contour_mm);
     return {
       partId: backendId,
       rotation: { degrees: asInt(item.rotation_deg) ?? 0 },
-      contourMm: [
+      contourMm: realContour ?? [
         { x: minX, y: minY },
         { x: maxX, y: minY },
         { x: maxX, y: maxY },

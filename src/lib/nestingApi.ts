@@ -20,7 +20,11 @@ export interface UploadPayload {
   bytes: Uint8Array;
 }
 
-function _xhrGet(url: string, timeoutMs: number, headers?: Record<string, string>): Promise<string> {
+function _xhrGet(
+  url: string,
+  timeoutMs: number,
+  headers?: Record<string, string>,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("GET", url);
@@ -87,7 +91,6 @@ async function asMap(response: Response): Promise<Record<string, unknown>> {
   throw new ApiException("استجابة غير صالحة من الخادم.");
 }
 
-
 export class NestingApiClient {
   private readonly _baseUrl: string;
 
@@ -99,37 +102,56 @@ export class NestingApiClient {
     return this._baseUrl;
   }
 
-  private async _safeFetch(
+  private _safeFetch(
     input: string | URL | Request,
     init?: RequestInit,
-    timeoutMs?: number
+    timeoutMs?: number,
   ): Promise<Response> {
-    try {
-      if (!timeoutMs) {
-        return await fetch(input, init);
-      }
-      
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), timeoutMs);
-      
-      try {
-        const response = await fetch(input, {
-          ...init,
-          signal: controller.signal,
-        });
-        clearTimeout(id);
-        return response;
-      } catch (err) {
-        clearTimeout(id);
-        if (err instanceof DOMException && err.name === "AbortError") {
-          throw new Error("انتهت مهلة الاتصال بالخادم.");
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open(init?.method || "GET", input.toString());
+
+      if (init?.headers) {
+        const h = init.headers;
+        if (h instanceof Headers) {
+          h.forEach((value, key) => xhr.setRequestHeader(key, value));
+        } else if (Array.isArray(h)) {
+          h.forEach(([key, value]) => xhr.setRequestHeader(key, value));
+        } else {
+          for (const [key, value] of Object.entries(h)) {
+            xhr.setRequestHeader(key, value);
+          }
         }
-        throw err;
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new ApiException(`فشل الاتصال بالخادم: ${message}`);
-    }
+
+      if (timeoutMs) xhr.timeout = timeoutMs;
+      xhr.responseType = "blob";
+
+      xhr.onload = () => {
+        resolve(
+          new Response(xhr.response, {
+            status: xhr.status,
+            statusText: xhr.statusText,
+          }),
+        );
+      };
+
+      xhr.onerror = () => {
+        reject(new ApiException("فشل الاتصال بالخادم: Failed to fetch"));
+      };
+
+      xhr.ontimeout = () => {
+        reject(
+          new ApiException("فشل الاتصال بالخادم: انتهت مهلة الاتصال بالخادم."),
+        );
+      };
+
+      if (init?.body) {
+        xhr.send(init.body as XMLHttpRequestBodyInit);
+      } else {
+        xhr.send();
+      }
+    });
   }
 
   async healthCheck(timeoutMs = 3000): Promise<void> {
@@ -140,7 +162,7 @@ export class NestingApiClient {
     const response = await this._safeFetch(
       `${this._baseUrl}/jobs`,
       { method: "POST" },
-      15000
+      15000,
     );
     await ensure2xx(response);
     return asMap(response);
@@ -150,7 +172,7 @@ export class NestingApiClient {
     const response = await this._safeFetch(
       `${this._baseUrl}/jobs/${encodeURIComponent(jobId)}`,
       undefined,
-      10000
+      10000,
     );
     await ensure2xx(response);
     return asMap(response);
@@ -244,7 +266,7 @@ export class NestingApiClient {
     const response = await this._safeFetch(
       `${this._baseUrl}/jobs/${encodeURIComponent(jobId)}/parts/${encodeURIComponent(clientPartId)}`,
       { method: "DELETE" },
-      10000
+      10000,
     );
     await ensure2xx(response);
   }
@@ -253,7 +275,7 @@ export class NestingApiClient {
     const response = await this._safeFetch(
       `${this._baseUrl}/jobs/${encodeURIComponent(jobId)}`,
       { method: "DELETE" },
-      10000
+      10000,
     );
     await ensure2xx(response);
   }
@@ -281,7 +303,7 @@ export class NestingApiClient {
           packing_attempts: params.packingAttempts,
         }),
       },
-      30 * 60 * 1000
+      30 * 60 * 1000,
     );
     await ensure2xx(response);
     return asMap(response);
@@ -291,7 +313,7 @@ export class NestingApiClient {
     const response = await this._safeFetch(
       `${this._baseUrl}/layout/progress/${encodeURIComponent(jobId)}`,
       undefined,
-      3000
+      3000,
     );
     await ensure2xx(response);
     return asMap(response);
@@ -307,59 +329,167 @@ export class NestingApiClient {
     jobId: string,
     onStreamOpened?: (cancel: () => void) => void,
   ): AsyncGenerator<Record<string, unknown>, void, unknown> {
-    const response = await this._safeFetch(
-      `${this._baseUrl}/layout/progress/stream/${encodeURIComponent(jobId)}`,
-      {
-        headers: { Accept: "text/event-stream", "Cache-Control": "no-cache" },
-      },
-    );
-    if (!response.ok) {
-      const body = await response.text();
-      throw new ApiException(
-        await detailFromBody(body, response.status),
-        response.status,
-      );
-    }
-    if (!response.body) return;
+    const url = `${this._baseUrl}/layout/progress/stream/${encodeURIComponent(jobId)}`;
 
-    const reader = response.body.getReader();
+    const xhr = new XMLHttpRequest();
+    let isClosed = false;
+    const pushQueue: ((
+      value: IteratorResult<Record<string, unknown>, void>,
+    ) => void)[] = [];
+    const valueQueue: Record<string, unknown>[] = [];
+    let position = 0;
+    // BUG FIX: an XHR error/timeout that fires *after* the stream has already
+    // opened (startPromise resolved) used to call the startPromise `reject`,
+    // which is a no-op on an already-settled promise -- the failure vanished
+    // silently and the `while` loop below waited forever on a dead connection
+    // (see `pushQueue.push` below), since neither a new server event nor an
+    // XHR callback could ever arrive again. It is now recorded here and
+    // re-thrown once the generator's own loop unwinds, so the caller's
+    // existing `catch` (openProgressStream in nestingJobStore.ts) sees it and
+    // runs its normal reconnect logic, exactly as it already does for a
+    // pre-open failure.
+    let streamError: ApiException | null = null;
+
+    const closeStream = () => {
+      if (isClosed) return;
+      isClosed = true;
+      xhr.abort();
+      while (pushQueue.length > 0) {
+        const resolve = pushQueue.shift();
+        resolve?.({ done: true, value: undefined });
+      }
+    };
+
     if (onStreamOpened) {
-      onStreamOpened(() => {
-        reader.cancel().catch(() => {});
-      });
+      onStreamOpened(closeStream);
     }
-    const decoder = new TextDecoder();
-    let buffer = "";
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let newlineIndex: number;
-        while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
-          const line = buffer.slice(0, newlineIndex);
-          buffer = buffer.slice(newlineIndex + 1);
-          if (!line.startsWith("data:")) continue;
-          try {
-            const decoded = JSON.parse(line.slice(5).trim());
-            if (decoded && typeof decoded === "object")
-              yield decoded as Record<string, unknown>;
-          } catch {
-            // Ignore a malformed transient event; the next SSE event is an
-            // independent JSON message and does not require reconnecting.
+
+    const startPromise = new Promise<void>((resolve, reject) => {
+      xhr.open("GET", url);
+      xhr.setRequestHeader("Accept", "text/event-stream");
+      xhr.setRequestHeader("Cache-Control", "no-cache");
+      // Idle timeout, not a hard request cap: the browser resets this timer on
+      // every readyState/progress event on the connection (including the
+      // backend's own `: keep-alive` comment sent every
+      // _PROGRESS_HEARTBEAT_SECONDS=20s -- see main.py's stream_layout_progress),
+      // so a healthy multi-hour compute never trips it. It only fires when the
+      // connection has gone silent for 3 missed heartbeats in a row, which is
+      // exactly the silent-network-partition case (laptop sleep/wake, Wi-Fi
+      // drop with no TCP RST/FIN) that neither `onerror` nor `onload` reliably
+      // catches on their own.
+      xhr.timeout = 60000;
+
+      xhr.onreadystatechange = () => {
+        if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED) {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
           }
+        }
+      };
+
+      xhr.onprogress = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const text = xhr.responseText;
+          const newText = text.substring(position);
+
+          let newlineIndex: number;
+          let buffer = newText;
+
+          while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+            const line = buffer.slice(0, newlineIndex);
+            buffer = buffer.slice(newlineIndex + 1);
+            position += newlineIndex + 1;
+
+            if (!line.startsWith("data:")) continue;
+            try {
+              const decoded = JSON.parse(line.slice(5).trim());
+              if (decoded && typeof decoded === "object") {
+                const data = decoded as Record<string, unknown>;
+                if (pushQueue.length > 0) {
+                  const r = pushQueue.shift();
+                  r?.({ done: false, value: data });
+                } else {
+                  valueQueue.push(data);
+                }
+              }
+            } catch {
+              // Ignore malformed transient event
+            }
+          }
+        }
+      };
+
+      xhr.onload = async () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          closeStream();
+        } else {
+          try {
+            const detail = await detailFromBody(xhr.responseText, xhr.status);
+            reject(new ApiException(detail, xhr.status));
+          } catch {
+            reject(
+              new ApiException(
+                `فشل طلب الخادم (HTTP ${xhr.status}).`,
+                xhr.status,
+              ),
+            );
+          }
+        }
+      };
+
+      // Fires both for a failure while opening (startPromise still pending --
+      // `reject` below reaches the `await startPromise` and surfaces normally)
+      // and for a failure after the stream is already flowing (startPromise
+      // already resolved -- `reject` is then a harmless no-op, so the error is
+      // additionally captured in `streamError` and closeStream() unblocks the
+      // `while` loop, which re-throws it after the `finally` cleanup below).
+      xhr.onerror = () => {
+        const error = new ApiException("فشل الاتصال بالخادم لبدء البث.");
+        streamError = error;
+        reject(error);
+        closeStream();
+      };
+
+      xhr.ontimeout = () => {
+        const error = new ApiException(
+          "انقطع اتصال البث (لم يصل أي رد من الخادم).",
+        );
+        streamError = error;
+        reject(error);
+        closeStream();
+      };
+
+      xhr.send();
+    });
+
+    await startPromise;
+
+    try {
+      while (!isClosed) {
+        if (valueQueue.length > 0) {
+          yield valueQueue.shift()!;
+        } else {
+          const value = await new Promise<
+            IteratorResult<Record<string, unknown>, void>
+          >((resolve) => {
+            pushQueue.push(resolve);
+          });
+          if (value.done) break;
+          yield value.value;
         }
       }
     } finally {
-      reader.releaseLock();
+      closeStream();
     }
+
+    if (streamError) throw streamError;
   }
 
   async cancelLayout(jobId: string): Promise<void> {
     const response = await this._safeFetch(
       `${this._baseUrl}/layout/cancel/${encodeURIComponent(jobId)}`,
       { method: "POST" },
-      5000
+      5000,
     );
     await ensure2xx(response);
   }
@@ -388,7 +518,7 @@ export class NestingApiClient {
             : {}),
         }),
       },
-      30 * 60 * 1000
+      30 * 60 * 1000,
     );
     await ensure2xx(response);
     return asMap(response);
@@ -398,7 +528,7 @@ export class NestingApiClient {
     const response = await this._safeFetch(
       `${this._baseUrl}/download/${encodeURIComponent(jobId)}`,
       {},
-      10 * 60 * 1000
+      10 * 60 * 1000,
     );
     await ensure2xx(response);
     return new Uint8Array(await response.arrayBuffer());
@@ -408,7 +538,7 @@ export class NestingApiClient {
     const response = await this._safeFetch(
       `${this._baseUrl}/layout/export/${encodeURIComponent(jobId)}`,
       { method: "POST" },
-      10 * 60 * 1000
+      10 * 60 * 1000,
     );
     await ensure2xx(response);
     return new Uint8Array(await response.arrayBuffer());

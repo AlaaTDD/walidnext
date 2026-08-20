@@ -43,15 +43,57 @@ function computeScale(
   return Math.min(x, y);
 }
 
+// Exact point-in-polygon test (ray casting / even-odd rule) against the
+// part's real contourMm, replacing the old axis-aligned-bbox hit test. Two
+// touching parts whose bounding boxes overlap (very common for irregular,
+// non-rectangular shapes -- an L-shape's bbox includes area the part itself
+// never occupies) used to make a click in that shared bbox region resolve to
+// whichever part happened to sit later in the array, regardless of which
+// shape the point was actually inside. Iterating parts back-to-front still
+// matches natural top-of-stack click behaviour for any parts whose real
+// contours do overlap at that exact point.
+function pointInPolygon(
+  xMm: number,
+  yMm: number,
+  contour: { x: number; y: number }[],
+): boolean {
+  let inside = false;
+  for (let i = 0, j = contour.length - 1; i < contour.length; j = i++) {
+    const xi = contour[i].x;
+    const yi = contour[i].y;
+    const xj = contour[j].x;
+    const yj = contour[j].y;
+    const intersects =
+      yi > yMm !== yj > yMm && xMm < ((xj - xi) * (yMm - yi)) / (yj - yi) + xi;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
 function hitTestPart(
   xMm: number,
   yMm: number,
   parts: PlacedPart[],
 ): string | null {
   for (let i = parts.length - 1; i >= 0; i--) {
-    const [minX, minY, maxX, maxY] = parts[i].boundsMm;
-    if (xMm >= minX && xMm <= maxX && yMm >= minY && yMm <= maxY) {
-      return parts[i].partId;
+    const part = parts[i];
+    // Cheap bbox rejection first: a point outside the bounding box is
+    // provably outside the polygon it bounds, so this never changes the
+    // result -- only skips the more expensive ray-casting loop for parts
+    // that could not possibly contain the point.
+    const [minX, minY, maxX, maxY] = part.boundsMm;
+    if (xMm < minX || xMm > maxX || yMm < minY || yMm > maxY) continue;
+    // contourMm always has at least 3 points when it came from the backend's
+    // real exterior ring (see nestingJobStore.ts decodePlaced), and exactly
+    // 4 for the legacy bbox-rectangle fallback -- either way a real ring to
+    // test against, never the degenerate 0/1/2-point case pointInPolygon
+    // cannot handle. bbox containment already passed for the fallback
+    // rectangle case, so this reduces to the same accept it always gave.
+    if (
+      part.contourMm.length >= 3 &&
+      pointInPolygon(xMm, yMm, part.contourMm)
+    ) {
+      return part.partId;
     }
   }
   return null;
