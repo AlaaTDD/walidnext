@@ -90,7 +90,7 @@ interface NestingJobState {
   resetJob: () => void;
   cancelCompute: () => Promise<void>;
   computeLayout: () => Promise<void>;
-  confirmAndExport: (folderName?: string) => Promise<void>;
+  confirmAndExport: () => Promise<void>;
   downloadExportedFile: () => Promise<boolean>;
   backToUpload: () => void;
   startNewJob: () => void;
@@ -203,8 +203,28 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
         prefs.setItem("dpi", String(settings.dpi));
         prefs.setItem("exportMode", settings.exportMode);
         prefs.setItem("backgroundColor", settings.backgroundColor);
-        prefs.setItem("processedImagesPath", settings.processedImagesPath);
         prefs.setItem("packingAttempts", String(settings.packingAttempts));
+        // Optional LARGE-tier LNS overrides (see NestingJobSettings' own doc
+        // comment) -- undefined means "use the backend's own default", so an
+        // unset field must be REMOVED from storage rather than written as the
+        // literal string "undefined", or the next loadSettings() would parse
+        // that back as NaN and leave a stale value sitting in storage forever.
+        if (settings.lnsMaxIterationsLarge === undefined) {
+          prefs.removeItem("lnsMaxIterationsLarge");
+        } else {
+          prefs.setItem(
+            "lnsMaxIterationsLarge",
+            String(settings.lnsMaxIterationsLarge),
+          );
+        }
+        if (settings.lnsDestroyFractionLarge === undefined) {
+          prefs.removeItem("lnsDestroyFractionLarge");
+        } else {
+          prefs.setItem(
+            "lnsDestroyFractionLarge",
+            String(settings.lnsDestroyFractionLarge),
+          );
+        }
       } catch {
         // best-effort only
       }
@@ -341,10 +361,32 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
   cancelCompute: async () => {
     const id = get().jobId;
     if (id == null) return;
+    // Record the CURRENT attempt's token as cancelled, not the job_id -- see
+    // the field's own doc comment above for why this distinction is what
+    // actually prevents the white-screen bug. If no computeLayout() attempt
+    // has ever run this session, computeAttemptToken is still 0; that's a
+    // valid "no attempt to cancel" token and guards correctly regardless.
+    cancelledComputeAttemptToken = computeAttemptToken;
+    stopProgressStreaming();
+    resetProgress(set);
+    set((state) =>
+      state.job.stage === "computing"
+        ? {
+            job: {
+              ...state.job,
+              stage: "upload",
+              errorMessage: "تم إلغاء الحساب.",
+              computeResult: undefined,
+              qaReport: undefined,
+            },
+          }
+        : {},
+    );
     try {
       await api.cancelLayout(id);
     } catch {
-      // best-effort cancel; the compute request's own catch handles the 499
+      // Best-effort cancel signal to the server; the UI has already moved on
+      // above regardless of whether this request itself succeeds.
     }
   },
 
@@ -358,6 +400,16 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
       return;
     }
     const jobId = state0.jobId;
+    // This attempt gets its OWN token, distinct from any prior attempt's --
+    // including a prior attempt against this exact same jobId (e.g. cancel
+    // then immediately restart on the same uploaded images). Every check
+    // later in this function and in tryRecoverCompletedCompute compares
+    // against myToken specifically, so a late callback belonging to an
+    // older attempt can only ever recognize itself as cancelled, never this
+    // newer one -- see computeAttemptToken's own doc comment for the full
+    // sequence this prevents.
+    computeAttemptToken += 1;
+    const myToken = computeAttemptToken;
 
     stopProgressStreaming();
     resetProgress(set);
@@ -384,12 +436,30 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
         clearanceMm: settings.clearanceMm,
         dpi: settings.dpi,
         packingAttempts: settings.packingAttempts,
+        lnsMaxIterationsLarge: settings.lnsMaxIterationsLarge,
+        lnsDestroyFractionLarge: settings.lnsDestroyFractionLarge,
       });
-      applyComputeData(set, get, data, jobId);
-      await persistManifest(get);
+      const wasCancelledByUser = cancelledComputeAttemptToken === myToken;
+      // A late success response for an ATTEMPT the user already clicked
+      // "cancel" on must never overwrite the stage the user is already
+      // looking at -- applying it here used to run unconditionally, which is
+      // exactly what made the button feel like it "got stuck": the screen
+      // would jump back to upload on click, then silently snap forward to
+      // proofPreview a few seconds later when the server's in-flight compute
+      // finished anyway. Comparing by myToken (not jobId) means this stays
+      // correct even if a newer attempt has since started on the same jobId.
+      if (!wasCancelledByUser) {
+        applyComputeData(set, get, data, jobId);
+        await persistManifest(get);
+      }
     } catch (error) {
-      const recovered = await tryRecoverCompletedCompute(set, get, jobId);
-      if (!recovered) {
+      const recovered = await tryRecoverCompletedCompute(
+        set,
+        get,
+        jobId,
+        myToken,
+      );
+      if (!recovered && cancelledComputeAttemptToken !== myToken) {
         if (error instanceof ApiException) {
           set((state) => ({
             job: {
@@ -417,7 +487,7 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
     }
   },
 
-  confirmAndExport: async (folderName) => {
+  confirmAndExport: async () => {
     const state0 = get();
     if (!canConfirmExport(state0.job) || state0.jobId == null) return;
     const jobId = state0.jobId;
@@ -438,8 +508,6 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
         jobId,
         mode: settings.exportMode,
         backgroundColor: settings.backgroundColor,
-        processedImagesPath: settings.processedImagesPath,
-        folderName,
       });
       applyExportData(set, data);
       await get().downloadExportedFile();
@@ -455,8 +523,6 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
             jobId,
             mode: settings.exportMode,
             backgroundColor: settings.backgroundColor,
-            processedImagesPath: settings.processedImagesPath,
-            folderName,
           });
           applyExportData(set, confirm);
           await get().downloadExportedFile();
@@ -550,6 +616,47 @@ type Getter = () => NestingJobState;
 // reactive `jobId` in the store stays in sync via every call site below.
 let moduleJobId: string | null = null;
 
+// Identifies which computeLayout() ATTEMPT (not which job_id) the user has
+// cancelled, so a late response from an OLD attempt can never be confused
+// with a NEW attempt against the very same job_id. This used to be keyed by
+// job_id alone (locallyCancelledJobId: string | null) -- but a job_id is
+// reused across attempts whenever the user cancels and then quickly starts
+// again on the same images. Sequence that broke:
+//   1. compute attempt A starts on job_id "X", computeAttemptToken becomes 1.
+//   2. User cancels -- cancelCompute() records cancelledComputeAttemptToken=1
+//      and flips stage to "upload". handleBack() also calls onBack(), which
+//      is what actually switches page.tsx's view back to "upload".
+//   3. Attempt A's own in-flight request is still awaiting a response (the
+//      cancel signal is fire-and-forget over the network -- see
+//      cancelCompute's un-awaited api.cancelLayout call below).
+//   4. User quickly clicks "start" again on the SAME job_id (same uploaded
+//      images, same jobId in the store). computeLayout() starts a NEW
+//      attempt B, bumps computeAttemptToken to 2, and stage flips back to
+//      "computing" while page.tsx's view flips back to "preview".
+//   5. Attempt A's late response finally arrives at its own catch block
+//      (e.g. a 499 from the server confirming the cancel). It checks
+//      "was MY token (1) the one recorded as cancelled?" -- yes, so it
+//      leaves state.job.stage alone, exactly as intended: attempt A knows
+//      it was the one that got cancelled, so it stays quiet and never
+//      touches attempt B's state.
+// Previously step 5's check compared against a single shared job_id-keyed
+// value that step 4 had *already overwritten to null* the moment attempt B
+// started (on the theory "a new attempt for this job_id supersedes any old
+// cancel flag") -- so attempt A's guard incorrectly read as "not cancelled"
+// and its catch block force-set stage to "upload", stomping on attempt B's
+// live "computing"/"proofPreview" state while page.tsx's view was still
+// "preview" (attempt B never called onBack()). PreviewScreen's Body render
+// switch has no case for stage === "upload", so it silently rendered null --
+// a blank screen the person could not get out of, even though attempt B was
+// a perfectly healthy, uncancelled compute. Keying the guard per-ATTEMPT via
+// an ever-incrementing token instead of per-job_id makes this structurally
+// impossible: attempt A and attempt B always carry distinct tokens even when
+// they share the exact same job_id, so a late response can only ever match
+// (and therefore only ever stay quiet for) the specific attempt it belongs
+// to, never a different, newer one.
+let computeAttemptToken = 0;
+let cancelledComputeAttemptToken: number | null = null;
+
 async function loadSettings(set: Setter): Promise<void> {
   if (typeof window === "undefined") return;
   let serverUrl: string | null = null;
@@ -595,6 +702,20 @@ async function loadSettings(set: Setter): Promise<void> {
       return fallback;
     }
   };
+  // Same as readNum, but for the OPTIONAL LNS fields: an absent/invalid key
+  // must come back as undefined ("use backend default"), not some numeric
+  // fallback, since undefined is itself the meaningful, valid default state
+  // for these two fields (see NestingJobSettings' own doc comment).
+  const readOptionalNum = (key: string): number | undefined => {
+    try {
+      const raw = prefs.getItem(key);
+      if (raw == null) return undefined;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  };
 
   const settings: NestingJobSettings = {
     sheetWidthMm: readNum("sheetWidthMm", 790.0),
@@ -604,9 +725,14 @@ async function loadSettings(set: Setter): Promise<void> {
     dpi: readNum("dpi", 300.0),
     exportMode: readStr("exportMode", "RGB"),
     backgroundColor: readStr("backgroundColor", "#FFFFFF"),
-    processedImagesPath: readStr("processedImagesPath", ""),
     // Single attempt only: the LNS optimizer handles all optimization.
     packingAttempts: Math.min(1, Math.max(1, readNum("packingAttempts", 1))),
+    // Optional LARGE-tier LNS overrides -- restoring these here is what makes
+    // a value the person set in the Advanced section survive a full browser
+    // close/reopen, not just the current tab session (updateSettings is the
+    // matching write side that put them in storage in the first place).
+    lnsMaxIterationsLarge: readOptionalNum("lnsMaxIterationsLarge"),
+    lnsDestroyFractionLarge: readOptionalNum("lnsDestroyFractionLarge"),
   };
   set((state) => ({ job: { ...state.job, settings } }));
 }
@@ -859,7 +985,6 @@ async function restorePersistedJob(set: Setter, get: Getter): Promise<void> {
       dpi: asDouble(settingsMap.dpi),
       exportMode: settingsMap.exportMode?.toString() ?? "RGB",
       backgroundColor: settingsMap.backgroundColor?.toString() ?? "#FFFFFF",
-      processedImagesPath: settingsMap.processedImagesPath?.toString() ?? "",
       packingAttempts: Math.min(
         1,
         Math.max(1, asInt(settingsMap.packingAttempts) ?? 1),
@@ -934,7 +1059,6 @@ async function recoverRemoteState(set: Setter, get: Getter): Promise<void> {
             jobId: id,
             mode: settings.exportMode,
             backgroundColor: settings.backgroundColor,
-            processedImagesPath: settings.processedImagesPath,
           });
           applyExportData(set, cachedExport);
           set((state) => ({
@@ -1051,7 +1175,6 @@ async function persistManifest(get: Getter): Promise<void> {
       dpi: job.settings.dpi,
       exportMode: job.settings.exportMode,
       backgroundColor: job.settings.backgroundColor,
-      processedImagesPath: job.settings.processedImagesPath,
       packingAttempts: job.settings.packingAttempts,
     },
     parts: job.uploadedParts.map((part) => ({
@@ -1183,9 +1306,27 @@ async function tryRecoverCompletedCompute(
   set: Setter,
   get: Getter,
   jobId: string,
+  myToken: number,
 ): Promise<boolean> {
   try {
     const state = await api.getJob(jobId);
+    // Same guard as computeLayout's own success path above: an ATTEMPT the
+    // user already cancelled must never have its compute result applied
+    // here, even though the server genuinely did finish it in the
+    // background. Returning `false` (not recovered) is correct in this case
+    // -- the caller's own cancel-branch already left the stage on "upload",
+    // and this function's only job is to decide whether to override that,
+    // not to report whether the server technically finished. Comparing by
+    // myToken (this specific computeLayout() call), not jobId, is what
+    // keeps this correct when a newer attempt has since started on the same
+    // jobId -- otherwise an old attempt's late recovery check could
+    // wrongly conclude "not cancelled" using a flag a newer attempt already
+    // overwrote, and silently apply a stale/wrong result on top of the new
+    // attempt's live state (or, via the caller's catch block, force the
+    // stage back to "upload"/"failed" underneath a still-running or already
+    // -succeeded newer attempt -- the root cause of the white-screen bug
+    // this token scheme fixes).
+    if (cancelledComputeAttemptToken === myToken) return false;
     const stage = state.stage?.toString();
     if (stage === "computed" || stage === "confirmed") {
       applyComputeData(set, get, state, jobId);
@@ -1356,8 +1497,6 @@ function applyExportData(set: Setter, data: Record<string, unknown>): void {
       heightPx: asInt(data.height_px) ?? 0,
       dpi: asDouble(data.dpi),
       layerCount: asInt(data.layer_count) ?? 0,
-      processedImagesDirectory: data.processed_images_directory?.toString(),
-      movedProcessedImagesCount: asInt(data.moved_processed_images_count) ?? 0,
     };
     return {
       job: {

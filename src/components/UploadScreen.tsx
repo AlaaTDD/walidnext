@@ -57,6 +57,16 @@ export function UploadScreen({ onProceed }: { onProceed: () => void }) {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounterRef = useRef(0);
+  // "مسح الكل" and each row's "حذف" both await a server round-trip
+  // (deleteJob / deleteJobPart inside clearAllParts / removeUploadedPart in
+  // the store) before the local state updates. With no visible feedback
+  // during that await, the button looked completely dead the moment it was
+  // clicked -- no spinner, no disabled state, nothing distinguishing "still
+  // working" from "stuck". These two local flags drive a spinner + disabled
+  // state on the buttons below for exactly the duration of that await, so a
+  // slow delete now visibly *does something* instead of appearing frozen.
+  const [clearingAll, setClearingAll] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   const valid = job.uploadedParts.filter(
     (p) => p.validationStatus === "valid",
@@ -71,7 +81,17 @@ export function UploadScreen({ onProceed }: { onProceed: () => void }) {
 
   const handleFilesSelected = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const parts = await readFilesAsParts(Array.from(files));
+    // Mirrors the drag-drop and folder-picker paths below: the input's own
+    // `accept` attribute is a browser-level hint, not a guarantee -- several
+    // browsers still let the person pick "All Files" from the native dialog,
+    // so a non-image file can reach here even with `accept` set. Filtering
+    // through the same isSupportedImageFile check every other entry point
+    // already uses keeps all three ways of adding files behaving identically
+    // instead of only rejecting unsupported files after a full upload
+    // round-trip to the backend.
+    const imageFiles = Array.from(files).filter(isSupportedImageFile);
+    if (imageFiles.length === 0) return;
+    const parts = await readFilesAsParts(imageFiles);
     await addUploadedParts(parts);
   };
 
@@ -80,6 +100,26 @@ export function UploadScreen({ onProceed }: { onProceed: () => void }) {
     if (files.length === 0) return;
     const parts = await readFilesAsParts(files);
     await addUploadedParts(parts);
+  };
+
+  const handleClearAll = async () => {
+    if (clearingAll) return;
+    setClearingAll(true);
+    try {
+      await clearAllParts();
+    } finally {
+      setClearingAll(false);
+    }
+  };
+
+  const handleRemovePart = async (localId: string) => {
+    if (removingId != null) return;
+    setRemovingId(localId);
+    try {
+      await removeUploadedPart(localId);
+    } finally {
+      setRemovingId(null);
+    }
   };
 
   // Drag & drop support
@@ -193,8 +233,8 @@ export function UploadScreen({ onProceed }: { onProceed: () => void }) {
               {pending > 0 && (
                 <span className="flex items-center gap-1">
                   <span className="inline-block h-1.5 w-1.5 rounded-full bg-info" />
-                  <span className="font-semibold text-info">{pending}</span>{" "}
-                  قيد الفحص
+                  <span className="font-semibold text-info">{pending}</span> قيد
+                  الفحص
                 </span>
               )}
               {rejected > 0 && (
@@ -248,11 +288,14 @@ export function UploadScreen({ onProceed }: { onProceed: () => void }) {
                   الملفات
                 </h3>
                 <button
-                  onClick={() => clearAllParts()}
-                  disabled={uploading}
-                  className="text-[11px] font-medium text-slate-400 transition-colors hover:text-danger disabled:opacity-30"
+                  onClick={() => void handleClearAll()}
+                  disabled={uploading || clearingAll}
+                  className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400 transition-colors hover:text-danger disabled:opacity-30"
                 >
-                  مسح الكل
+                  {clearingAll && (
+                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-[1.5px] border-slate-300 border-t-danger" />
+                  )}
+                  {clearingAll ? "جاري المسح..." : "مسح الكل"}
                 </button>
               </div>
               <div className="divide-y divide-slate-100 rounded-xl border border-slate-200">
@@ -260,7 +303,8 @@ export function UploadScreen({ onProceed }: { onProceed: () => void }) {
                   <PartRow
                     key={part.id}
                     part={part}
-                    onRemove={removeUploadedPart}
+                    onRemove={handleRemovePart}
+                    removing={removingId === part.id}
                   />
                 ))}
               </div>
@@ -289,17 +333,36 @@ export function UploadScreen({ onProceed }: { onProceed: () => void }) {
 
 function SettingsIcon() {
   return (
-    <svg viewBox="0 0 20 20" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth={1.5}>
+    <svg
+      viewBox="0 0 20 20"
+      className="h-[18px] w-[18px]"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+    >
       <circle cx="10" cy="10" r="3" />
-      <path d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M3.4 3.4l1.4 1.4M15.2 15.2l1.4 1.4M3.4 16.6l1.4-1.4M15.2 4.8l1.4-1.4" strokeLinecap="round" />
+      <path
+        d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M3.4 3.4l1.4 1.4M15.2 15.2l1.4 1.4M3.4 16.6l1.4-1.4M15.2 4.8l1.4-1.4"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
 
 function ArrowUpIcon({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth={1.8}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5m0 0l-6 6m6-6l6 6" />
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M12 19V5m0 0l-6 6m6-6l6 6"
+      />
     </svg>
   );
 }
@@ -359,8 +422,18 @@ function ResumeBanner({
   return (
     <div className="mb-4 flex items-center gap-3 rounded-xl border border-info/20 bg-info/[0.04] p-3.5">
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-info/10 text-info">
-        <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v5h5M17 17v-5h-5M3 8a7 7 0 0112.3-4.3M17 12a7 7 0 01-12.3 4.3" />
+        <svg
+          viewBox="0 0 20 20"
+          className="h-4 w-4"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M3 3v5h5M17 17v-5h-5M3 8a7 7 0 0112.3-4.3M17 12a7 7 0 01-12.3 4.3"
+          />
         </svg>
       </div>
       <div className="flex-1 min-w-0">
@@ -452,7 +525,13 @@ function DropZone({
 
 function FolderIcon({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 20 20" className={className} fill="none" stroke="currentColor" strokeWidth={1.6}>
+    <svg
+      viewBox="0 0 20 20"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+    >
       <path d="M2 6a2 2 0 012-2h3.172a2 2 0 011.414.586l.828.828A2 2 0 0010.828 6H16a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
     </svg>
   );
@@ -465,9 +544,11 @@ function FolderIcon({ className }: { className?: string }) {
 const PartRow = memo(function PartRow({
   part,
   onRemove,
+  removing = false,
 }: {
   part: UploadedPart;
   onRemove: (id: string) => void;
+  removing?: boolean;
 }) {
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
 
@@ -490,14 +571,30 @@ const PartRow = memo(function PartRow({
   const statusEl =
     part.validationStatus === "valid" ? (
       <span className="flex items-center gap-1 text-[10.5px] font-medium text-success">
-        <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M4 8.5l2.5 2.5L12 5" />
+        <svg
+          viewBox="0 0 16 16"
+          className="h-3 w-3"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2.5}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M4 8.5l2.5 2.5L12 5"
+          />
         </svg>
         جاهزة
       </span>
     ) : part.validationStatus === "rejected" ? (
       <span className="flex items-center gap-1 text-[10.5px] font-medium text-danger">
-        <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2.5}>
+        <svg
+          viewBox="0 0 16 16"
+          className="h-3 w-3"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2.5}
+        >
           <path strokeLinecap="round" d="M5 5l6 6M11 5l-6 6" />
         </svg>
         {part.rejectionReason ?? "مرفوضة"}
@@ -522,7 +619,13 @@ const PartRow = memo(function PartRow({
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-slate-300">
-            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.5}>
+            <svg
+              viewBox="0 0 20 20"
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.5}
+            >
               <rect x="3" y="4" width="14" height="12" rx="1.5" />
               <circle cx="7.5" cy="8.5" r="1.5" />
               <path strokeLinecap="round" d="M3 14l4-4 3 3 2.5-2.5L17 14" />
@@ -541,13 +644,28 @@ const PartRow = memo(function PartRow({
 
       {/* Remove */}
       <button
-        onClick={() => onRemove(part.id)}
-        className="shrink-0 rounded-md p-1 text-slate-300 opacity-0 transition-all group-hover:opacity-100 hover:bg-slate-100 hover:text-slate-500"
-        title="حذف"
+        onClick={() => {
+          if (!removing) onRemove(part.id);
+        }}
+        disabled={removing}
+        className={`shrink-0 rounded-md p-1 text-slate-300 transition-all hover:bg-slate-100 hover:text-slate-500 disabled:hover:bg-transparent ${
+          removing ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+        }`}
+        title={removing ? "جاري الحذف..." : "حذف"}
       >
-        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" d="M4 4l8 8M12 4l-8 8" />
-        </svg>
+        {removing ? (
+          <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-[1.5px] border-slate-300 border-t-danger" />
+        ) : (
+          <svg
+            viewBox="0 0 16 16"
+            className="h-3.5 w-3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" d="M4 4l8 8M12 4l-8 8" />
+          </svg>
+        )}
       </button>
     </div>
   );
@@ -565,9 +683,7 @@ function UploadProgressBar({ progress }: { progress: number }) {
         <span className="text-[11px] font-medium text-slate-500">
           جاري الرفع والتحليل...
         </span>
-        <span className="text-[11px] font-semibold text-slate-700">
-          {pct}%
-        </span>
+        <span className="text-[11px] font-semibold text-slate-700">{pct}%</span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
         <div

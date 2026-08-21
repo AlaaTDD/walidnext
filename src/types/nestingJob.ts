@@ -78,8 +78,6 @@ export interface QaReport {
   heightPx: number;
   dpi: number;
   layerCount: number;
-  processedImagesDirectory?: string;
-  movedProcessedImagesCount: number;
 }
 
 export function isQaReportValid(report: QaReport): boolean {
@@ -101,8 +99,17 @@ export interface NestingJobSettings {
   dpi: number;
   exportMode: string;
   backgroundColor: string;
-  processedImagesPath: string;
   packingAttempts: number;
+  // Optional per-job overrides for the backend's LARGE-tier LNS knobs
+  // (>=100 placed parts -- see main.py's _lns_pipeline_settings). Undefined
+  // means "use the backend's own env-var-configured tiered default", so an
+  // existing job/settings object with neither field set behaves identically
+  // to before these were added. Bounds (max_iterations 1-60, destroy_fraction
+  // >0 to 0.40) are enforced client-side in SettingsSheet.tsx AND again on the
+  // backend via ComputeRequest's Field(ge=.../le=...), matching the same
+  // defense-in-depth pattern every other numeric field here already uses.
+  lnsMaxIterationsLarge?: number;
+  lnsDestroyFractionLarge?: number;
 }
 
 export function defaultSettings(): NestingJobSettings {
@@ -114,8 +121,9 @@ export function defaultSettings(): NestingJobSettings {
     dpi: 300.0,
     exportMode: "RGB",
     backgroundColor: "#FFFFFF",
-    processedImagesPath: "",
     packingAttempts: 1,
+    // Left undefined deliberately: a job that never opens the advanced LNS
+    // section should compute exactly like it did before this feature existed.
   };
 }
 

@@ -288,20 +288,34 @@ export class NestingApiClient {
     clearanceMm: number;
     dpi: number;
     packingAttempts: number;
+    // Optional per-job overrides for the backend's LARGE-tier LNS knobs.
+    // Omitted entirely from the request body when undefined (rather than sent
+    // as `null`) so ComputeRequest's own Optional[None] default on the backend
+    // is what actually decides the fallback -- see schemas.py's
+    // lns_max_iterations_large/lns_destroy_fraction_large fields.
+    lnsMaxIterationsLarge?: number;
+    lnsDestroyFractionLarge?: number;
   }): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = {
+      sheet_width_mm: params.sheetWidthMm,
+      sheet_height_mm: params.sheetHeightMm,
+      sheet_margin_mm: params.sheetMarginMm,
+      clearance_mm: params.clearanceMm,
+      dpi: params.dpi,
+      packing_attempts: params.packingAttempts,
+    };
+    if (params.lnsMaxIterationsLarge !== undefined) {
+      body.lns_max_iterations_large = params.lnsMaxIterationsLarge;
+    }
+    if (params.lnsDestroyFractionLarge !== undefined) {
+      body.lns_destroy_fraction_large = params.lnsDestroyFractionLarge;
+    }
     const response = await this._safeFetch(
       `${this._baseUrl}/layout/compute/${encodeURIComponent(params.jobId)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sheet_width_mm: params.sheetWidthMm,
-          sheet_height_mm: params.sheetHeightMm,
-          sheet_margin_mm: params.sheetMarginMm,
-          clearance_mm: params.clearanceMm,
-          dpi: params.dpi,
-          packing_attempts: params.packingAttempts,
-        }),
+        body: JSON.stringify(body),
       },
       30 * 60 * 1000,
     );
@@ -498,8 +512,6 @@ export class NestingApiClient {
     jobId: string;
     mode: string;
     backgroundColor: string;
-    processedImagesPath: string;
-    folderName?: string;
   }): Promise<Record<string, unknown>> {
     const response = await this._safeFetch(
       `${this._baseUrl}/layout/confirm/${encodeURIComponent(params.jobId)}`,
@@ -509,13 +521,6 @@ export class NestingApiClient {
         body: JSON.stringify({
           mode: params.mode,
           background_color: params.backgroundColor,
-          processed_images_path:
-            params.processedImagesPath.length === 0
-              ? null
-              : params.processedImagesPath,
-          ...(params.folderName && params.folderName.length > 0
-            ? { folder_name: params.folderName }
-            : {}),
         }),
       },
       30 * 60 * 1000,

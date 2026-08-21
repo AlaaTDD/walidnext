@@ -43,6 +43,14 @@ export function PreviewScreen({
   const [selectedSheetIndex, setSelectedSheetIndex] = useState(0);
   const [showClearanceZones, setShowClearanceZones] = useState(false);
   const [pulse, setPulse] = useState(false);
+  // handleBack() already returns to the upload screen in the same tick it's
+  // called (onBack() is synchronous, cancelCompute() runs un-awaited in the
+  // background) -- but if a slow render, a busy main thread, or a slow
+  // cancelLayout() call on the server delays that transition even briefly,
+  // the cancel button had no visual acknowledgement of the click at all in
+  // the meantime. This flag flips true the instant the button is pressed so
+  // it immediately shows disabled + a spinner, closing that gap.
+  const [cancelling, setCancelling] = useState(false);
 
   // Mirrors preview_screen.dart's initState: trigger computeLayout() once on
   // arrival if no result is already cached (e.g. from server-state recovery).
@@ -50,6 +58,28 @@ export function PreviewScreen({
     if (job.computeResult == null) void computeLayout();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Second, independent layer of the same fix applied to page.tsx's own
+  // stage->view sync effect: page.tsx now also watches for job.stage
+  // regressing to "upload" while view is already "preview"/"export" and
+  // resets view itself, which unmounts this component entirely. This effect
+  // here is deliberately redundant with that one rather than relying on it
+  // alone: job.stage is store-global, effectively public state that has no
+  // idea which screen is currently mounted, so it is exactly the kind of
+  // cross-cutting invariant that deserves a defense-in-depth guard at the
+  // component that actually renders blank if it's ever violated, not only
+  // at the router that happens to own view today. Should a future refactor
+  // of page.tsx's routing ever drop or narrow that effect, this one keeps
+  // PreviewScreen itself unable to sit on a stale "upload" stage no matter
+  // which store action caused the regression (a lost remote job on
+  // reconnect, a cleared part list, or anything else) -- Body's own render
+  // switch has no fallback case for "upload" by design (that state belongs
+  // to UploadScreen), so the only correct response the instant it's
+  // observed is to leave, exactly like the person pressing back themselves.
+  useEffect(() => {
+    if (job.stage === "upload") onBack();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job.stage]);
 
   const selectPart = (id: string | null) => {
     setSelectedPartId(id);
@@ -66,10 +96,28 @@ export function PreviewScreen({
   };
 
   const handleBack = () => {
+    setCancelling(true);
     if (job.stage === "computing") void cancelCompute();
     backToUpload();
     onBack();
   };
+
+  // The "cancel compute" buttons inside <Body> (both the "computing" state's
+  // own cancel button and the "failed" state's "cancel and go back" button)
+  // previously called cancelCompute() directly. cancelCompute() only flips
+  // job.stage to "upload" inside the store -- it has no way to also change
+  // which top-level screen page.tsx is rendering. page.tsx's own view-sync
+  // effect only reacts to job.stage while `view === "upload"` (see its early
+  // `if (view !== "upload") return;` guard), so while the person is already
+  // on PreviewScreen (view === "preview"), that stage flip was never picked
+  // up. Body's own render switch has no case for stage === "upload" either,
+  // so it fell through to returning null -- a fully blank screen the person
+  // could not get out of, even though the cancel itself had actually worked
+  // in the background. Routing this through the same handleBack() the
+  // "تعديل الصور" button already uses fixes it: it cancels the compute AND
+  // calls onBack(), which is what actually tells page.tsx to switch back to
+  // the upload screen.
+  const cancelComputeAndGoBack = () => handleBack();
 
   return (
     <div className="flex h-screen flex-col bg-slate-50">
@@ -98,7 +146,8 @@ export function PreviewScreen({
           computeProgressDone={computeProgressDone}
           computeProgressTotal={computeProgressTotal}
           computeProgressMessage={computeProgressMessage}
-          onCancelCompute={() => void cancelCompute()}
+          onCancelCompute={cancelComputeAndGoBack}
+          cancelling={cancelling}
           onRetryCompute={() => void computeLayout()}
           selectedPartId={selectedPartId}
           selectedSheetIndex={selectedSheetIndex}
@@ -145,6 +194,7 @@ function Body({
   computeProgressTotal,
   computeProgressMessage,
   onCancelCompute,
+  cancelling,
   onRetryCompute,
   selectedPartId,
   selectedSheetIndex,
@@ -159,6 +209,7 @@ function Body({
   computeProgressTotal: number | null;
   computeProgressMessage: string | null;
   onCancelCompute: () => void;
+  cancelling: boolean;
   onRetryCompute: () => void;
   selectedPartId: string | null;
   selectedSheetIndex: number;
@@ -201,9 +252,13 @@ function Body({
           )}
           <button
             onClick={onCancelCompute}
-            className="mt-5 rounded-[11px] border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700"
+            disabled={cancelling}
+            className="mt-5 flex items-center justify-center gap-2 rounded-[11px] border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 disabled:opacity-60"
           >
-            إلغاء الحساب
+            {cancelling && (
+              <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-[1.5px] border-slate-300 border-t-slate-600" />
+            )}
+            {cancelling ? "جاري الإلغاء..." : "إلغاء الحساب"}
           </button>
         </div>
       </div>
@@ -223,9 +278,13 @@ function Body({
           <div className="mt-5 flex items-center justify-center gap-3">
             <button
               onClick={onCancelCompute}
-              className="rounded-[11px] border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700"
+              disabled={cancelling}
+              className="flex items-center justify-center gap-2 rounded-[11px] border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 disabled:opacity-60"
             >
-              إلغاء والعودة
+              {cancelling && (
+                <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-[1.5px] border-slate-300 border-t-slate-600" />
+              )}
+              {cancelling ? "جاري الإلغاء..." : "إلغاء والعودة"}
             </button>
             <button
               onClick={onRetryCompute}
@@ -260,6 +319,16 @@ function Body({
     );
   }
 
+  // Unreachable in practice: the only remaining job.stage values here are
+  // "upload" (guarded above by the self-healing useEffect, which calls
+  // onBack() and unmounts this component before this render path is hit) and
+  // "proofPreview" without a computeResult yet (a brief, self-resolving
+  // in-between moment right after reconcileWithServer sets stage but before
+  // applyComputeData populates computeResult a few lines later in the same
+  // async flow -- see recoverRemoteState in nestingJobStore.ts). Rendering
+  // nothing for that one synchronous tick is correct and intentional: there
+  // is nothing meaningful to show yet, and it resolves on its own on the
+  // very next render.
   return null;
 }
 

@@ -2,26 +2,14 @@
 
 /**
  * Web port of frontend/lib/screens/export_screen.dart.
- * Same folder-name dialog gate (only shown when processedImagesPath is set),
- * same exporting/completed/failed sub-states, same QA report rows.
+ * Same exporting/completed/failed sub-states, same QA report rows.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useNestingJobStore } from "@/lib/nestingJobStore";
 import { saveExportedTiff } from "@/lib/exportFileSaver";
 import { WorkflowStepper } from "./WorkflowStepper";
 import { ViolationListTile } from "./ViolationListTile";
 import type { NestingJob } from "@/types/nestingJob";
-
-function pad2(n: number): string {
-  return n.toString().padStart(2, "0");
-}
-function timestamp(): string {
-  const now = new Date();
-  return (
-    `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}` +
-    `_${pad2(now.getHours())}-${pad2(now.getMinutes())}-${pad2(now.getSeconds())}`
-  );
-}
 
 export function ExportScreen({ onDone }: { onDone: () => void }) {
   const job = useNestingJobStore((s) => s.job);
@@ -36,23 +24,17 @@ export function ExportScreen({ onDone }: { onDone: () => void }) {
   );
   const startNewJob = useNestingJobStore((s) => s.startNewJob);
 
-  const [dialogOpen, setDialogOpen] = useState(false);
   const triggered = useRef(false);
 
-  const runExport = (folderName?: string) => {
-    void confirmAndExport(folderName);
+  const runExport = () => {
+    void confirmAndExport();
   };
 
   useEffect(() => {
     if (triggered.current) return;
     if (job.stage !== "proofPreview") return;
     triggered.current = true;
-    const hasProcessedPath = job.settings.processedImagesPath.trim().length > 0;
-    if (hasProcessedPath) {
-      setDialogOpen(true);
-    } else {
-      runExport(undefined);
-    }
+    runExport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -96,12 +78,7 @@ export function ExportScreen({ onDone }: { onDone: () => void }) {
         {job.stage === "failed" && (
           <FailedState
             message={job.errorMessage ?? "حدث خطأ غير متوقع"}
-            onRetry={() => {
-              const hasProcessedPath =
-                job.settings.processedImagesPath.trim().length > 0;
-              if (hasProcessedPath) setDialogOpen(true);
-              else runExport(undefined);
-            }}
+            onRetry={() => runExport()}
           />
         )}
         {job.stage !== "exporting" &&
@@ -114,95 +91,6 @@ export function ExportScreen({ onDone }: { onDone: () => void }) {
             />
           )}
       </main>
-
-      {dialogOpen && (
-        <FolderNameDialog
-          onCancel={() => {
-            setDialogOpen(false);
-            onDone();
-          }}
-          onConfirm={(name) => {
-            setDialogOpen(false);
-            runExport(name);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function FolderNameDialog({
-  onCancel,
-  onConfirm,
-}: {
-  onCancel: () => void;
-  onConfirm: (name: string) => void;
-}) {
-  const [name, setName] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  const preview = () => {
-    const trimmed = name.trim();
-    const ts = timestamp();
-    return trimmed.length === 0 ? ts : `${trimmed}_${ts}`;
-  };
-
-  const submit = () => {
-    const trimmed = name.trim();
-    if (/[/\\]/.test(trimmed)) {
-      setError("الاسم لا يمكن أن يحتوي على / أو \\");
-      return;
-    }
-    onConfirm(trimmed);
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-[380px] rounded-2xl bg-white p-5 shadow-xl">
-        <h2 className="text-base font-bold text-slate-900">اسم مجلد الصور</h2>
-        <p className="mt-2 text-[13px] leading-[1.5] text-slate-600">
-          اكتب اسمًا للمجلد اللي هيتحفظ فيه الصور.
-          <br />
-          التاريخ هيتضاف تلقائيًا بجانب الاسم.
-        </p>
-        <input
-          autoFocus
-          value={name}
-          onChange={(e) => {
-            setName(e.target.value);
-            setError(null);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") submit();
-          }}
-          placeholder="مثال: طلبية_أحمد"
-          className="mt-3.5 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-primary"
-        />
-        {error && <p className="mt-1.5 text-xs text-danger">{error}</p>}
-        <div className="mt-2.5 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
-          <p className="text-[11px] text-slate-500">اسم المجلد النهائي:</p>
-          <p className="mt-[3px] font-mono text-[13px] font-bold text-primary">
-            {preview()}
-          </p>
-          <p className="mt-1.5 whitespace-pre-line font-mono text-[11px] leading-[1.6] text-slate-500">
-            {"placed/  ← الصور المرتبة\nunplaced/  ← الصور غير المرتبة"}
-          </p>
-        </div>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            onClick={onCancel}
-            className="rounded-lg px-4 py-2 text-sm font-semibold text-slate-600"
-          >
-            إلغاء
-          </button>
-          <button
-            onClick={submit}
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white"
-          >
-            تأكيد وتصدير
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -351,12 +239,6 @@ function CompletedState({
               )
             }
           />
-          {report.movedProcessedImagesCount > 0 && (
-            <ArchiveNotice
-              count={report.movedProcessedImagesCount}
-              directory={report.processedImagesDirectory}
-            />
-          )}
         </div>
       )}
 
@@ -478,37 +360,6 @@ function QaRow({ label, pass }: { label: string; pass: boolean }) {
         className={`text-[12.2px] font-bold ${pass ? "text-slate-700" : "text-danger"}`}
       >
         {label}
-      </p>
-    </div>
-  );
-}
-
-function ArchiveNotice({
-  count,
-  directory,
-}: {
-  count: number;
-  directory?: string;
-}) {
-  return (
-    <div className="mt-2.5 flex items-center gap-2 rounded-[10px] border border-success/[0.2] bg-success/[0.06] p-3">
-      <svg
-        viewBox="0 0 24 24"
-        className="h-[18px] w-[18px] shrink-0 text-success"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={2}
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M3 7h4l2-2h6l2 2h4v12H3V7z"
-        />
-      </svg>
-      <p className="flex-1 text-[11.8px] leading-[1.4] text-slate-700">
-        {!directory || directory.length === 0
-          ? `تم نقل ${count} صورة أصلية بعد نجاح الفحص.`
-          : `تم نقل ${count} صورة أصلية إلى: ${directory}`}
       </p>
     </div>
   );

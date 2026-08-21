@@ -15,6 +15,14 @@ export async function saveExportedTiff(
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  // Revoking synchronously in the same tick as click() can race Safari's
+  // download handoff -- it reads the blob URL asynchronously after the
+  // click event, and a URL revoked before that read completes can abort or
+  // truncate the download. Deferring to a macrotask (setTimeout 0, not a
+  // microtask/Promise) guarantees the click's own synchronous handling and
+  // Safari's async download start have both had a chance to run first, on
+  // every browser -- Chrome/Firefox already tolerate this ordering, so the
+  // delay changes nothing for them and only removes the race for Safari.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
   return true;
 }

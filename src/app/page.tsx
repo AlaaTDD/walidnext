@@ -63,13 +63,36 @@ export default function Home() {
   // If server-state recovery (initialize -> recoverRemoteState) discovers the
   // job is already past upload (e.g. reopening the tab mid-computation or
   // with a cached result), jump straight to the right screen instead of
-  // stranding the person on the upload list.
+  // stranding the person on the upload list. This direction (upload ->
+  // preview/export) is intentionally the common case: any store action that
+  // legitimately advances job.stage should also move view forward here.
   useEffect(() => {
     if (view !== "upload") return;
     if (job.stage === "computing" || job.stage === "proofPreview") {
       setView("preview");
     } else if (job.stage === "exporting" || job.stage === "completed") {
       setView("export");
+    }
+  }, [job.stage, view]);
+
+  // The reverse direction matters too, and used to be entirely unhandled:
+  // job.stage is store-global state that has no idea which screen is
+  // currently mounted, so any code path that resets a job back to "upload"
+  // while view is already "preview" or "export" -- a lost/expired remote
+  // job discovered on reconnect, a cleared part list, a future feature, or
+  // any path other than PreviewScreen's own onBack-calling cancel button --
+  // used to leave view permanently stuck forward of upload forever, because
+  // the effect above only ever runs its body while view === "upload". Since
+  // neither PreviewScreen's nor ExportScreen's own render switch has (or
+  // should have) a fallback case for stage === "upload" -- that state
+  // belongs to UploadScreen -- the only correct response the instant it's
+  // observed is to leave, exactly as if the person had pressed back
+  // themselves. This is what actually eliminates the whole class of
+  // white-screen bug at its root, independent of which future code path
+  // causes the regression.
+  useEffect(() => {
+    if (view !== "upload" && job.stage === "upload") {
+      setView("upload");
     }
   }, [job.stage, view]);
 

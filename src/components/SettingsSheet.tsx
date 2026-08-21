@@ -46,12 +46,57 @@ function rgbToHex(r: number, g: number, b: number): string {
   return `#${value}`;
 }
 
-function validatePositive(text: string): { value?: number; error?: string } {
+function validatePositive(
+  text: string,
+  maxValue?: number,
+): { value?: number; error?: string } {
   const trimmed = text.trim();
   if (trimmed.length === 0) return { error: "مطلوب" };
   const value = Number(trimmed);
   if (!Number.isFinite(value)) return { error: "رقم غير صالح" };
   if (value <= 0) return { error: "لازم يكون أكبر من صفر" };
+  // Without an upper bound, a mistyped extra digit (e.g. 79000 instead of
+  // 790 for sheet width) silently passes validation and reaches the backend
+  // as a valid request, where it either fails confusingly deep in the
+  // nesting engine or succeeds but produces an unusable result. maxValue is
+  // deliberately generous per field (see each call site below) so it only
+  // catches genuine input mistakes, never a legitimate real-world value.
+  if (maxValue !== undefined && value > maxValue) {
+    return { error: `لازم يكون أصغر من أو يساوي ${maxValue}` };
+  }
+  return { value };
+}
+
+// Same shape as validatePositive, but OPTIONAL -- an empty field is valid
+// here (means "use the backend's own tiered default", see NestingJobSettings'
+// lnsMaxIterationsLarge/lnsDestroyFractionLarge doc comment) rather than a
+// required-field error. minValue/maxValue mirror the backend's own
+// ComputeRequest Field(ge=.../le=...) bounds exactly, so a value rejected here
+// would also be rejected server-side -- this is the same value, validated
+// twice, not two different policies.
+function validateOptionalBounded(
+  text: string,
+  minValue: number,
+  maxValue: number,
+): { value?: number; error?: string } {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return {};
+  const value = Number(trimmed);
+  if (!Number.isFinite(value)) return { error: "رقم غير صالح" };
+  if (value < minValue) {
+    return { error: `لازم يكون ${minValue} على الأقل` };
+  }
+  if (value > maxValue) {
+    // This is the "مبالغ فيه" ceiling itself -- values above this are
+    // rejected here for the same reason the backend rejects them via
+    // ComputeRequest's le=... bound: past this point destroy_fraction starts
+    // rebuilding most of the layout every iteration instead of making a
+    // targeted improvement, and max_iterations stops mattering once the time
+    // budget (a separate, untouched setting) runs out first.
+    return {
+      error: `أقصى قيمة مسموحة ${maxValue} (أكتر من كده مبالغ فيه وممكن يبطّئ من غير فايدة إضافية)`,
+    };
+  }
   return { value };
 }
 
@@ -70,23 +115,49 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
   const [margin, setMargin] = useState(settings.sheetMarginMm.toFixed(1));
   const [clearance, setClearance] = useState(settings.clearanceMm.toFixed(2));
   const [dpi, setDpi] = useState(settings.dpi.toFixed(0));
-  const [processedPath, setProcessedPath] = useState(
-    settings.processedImagesPath,
-  );
   const [backgroundColor, setBackgroundColor] = useState(
     settings.backgroundColor,
   );
   const [exportMode, setExportMode] = useState(settings.exportMode);
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  // Empty string means "unset / use backend default", matching
+  // lnsMaxIterationsLarge/lnsDestroyFractionLarge being optional on
+  // NestingJobSettings -- an untouched field must round-trip back to
+  // undefined, not to some numeric placeholder.
+  const [lnsMaxIterationsLarge, setLnsMaxIterationsLarge] = useState(
+    settings.lnsMaxIterationsLarge?.toString() ?? "",
+  );
+  const [lnsDestroyFractionLarge, setLnsDestroyFractionLarge] = useState(
+    settings.lnsDestroyFractionLarge?.toString() ?? "",
+  );
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const handleSave = async () => {
-    const widthResult = validatePositive(width);
-    const heightResult = validatePositive(height);
-    const marginResult = validatePositive(margin);
-    const clearanceResult = validatePositive(clearance);
-    const dpiResult = validatePositive(dpi);
+    // Bounds are generous on purpose -- wide enough for any real print sheet,
+    // margin, clearance, or export resolution, but tight enough to catch an
+    // accidental extra digit or a unit mix-up before it reaches the backend.
+    const widthResult = validatePositive(width, 10000);
+    const heightResult = validatePositive(height, 10000);
+    const marginResult = validatePositive(margin, 1000);
+    const clearanceResult = validatePositive(clearance, 100);
+    const dpiResult = validatePositive(dpi, 2400);
+    // Bounds mirror ComputeRequest's own Field(ge=1, le=60) and
+    // Field(gt=0, le=0.40) in schemas.py exactly -- see that field's doc
+    // comment for why 60/0.40 specifically (both are the highest values this
+    // codebase's own tests already exercise for the LNS pipeline).
+    const lnsIterationsResult = validateOptionalBounded(
+      lnsMaxIterationsLarge,
+      1,
+      60,
+    );
+    const lnsDestroyResult = validateOptionalBounded(
+      lnsDestroyFractionLarge,
+      0.01,
+      0.4,
+    );
 
     const nextErrors: Record<string, string> = {};
     if (widthResult.error) nextErrors.width = widthResult.error;
@@ -94,6 +165,10 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
     if (marginResult.error) nextErrors.margin = marginResult.error;
     if (clearanceResult.error) nextErrors.clearance = clearanceResult.error;
     if (dpiResult.error) nextErrors.dpi = dpiResult.error;
+    if (lnsIterationsResult.error)
+      nextErrors.lnsMaxIterationsLarge = lnsIterationsResult.error;
+    if (lnsDestroyResult.error)
+      nextErrors.lnsDestroyFractionLarge = lnsDestroyResult.error;
     setErrors(nextErrors);
 
     if (Object.keys(nextErrors).length > 0) return;
@@ -106,8 +181,9 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
       dpi: dpiResult.value!,
       exportMode,
       backgroundColor,
-      processedImagesPath: processedPath.trim(),
       packingAttempts: NestingConstants.maxPackingAttempts,
+      lnsMaxIterationsLarge: lnsIterationsResult.value,
+      lnsDestroyFractionLarge: lnsDestroyResult.value,
     };
     await updateSettings(newSettings);
     onClose();
@@ -176,7 +252,8 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
             />
             <p className="mt-1.5 text-xs leading-snug text-slate-500">
               الافتراضي هو <span dir="ltr">http://127.0.0.1:8000</span> عندما
-              تكون الواجهة والـPython على نفس الجهاز. بهذا تظل الصور داخل الجهاز.
+              تكون الواجهة والـPython على نفس الجهاز. بهذا تظل الصور داخل
+              الجهاز.
             </p>
             <button
               onClick={async () => {
@@ -270,15 +347,6 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
             </button>
           </div>
 
-          <div className="mt-3.5">
-            <NumberField
-              label="مسار حفظ الصور المعالجة"
-              value={processedPath}
-              onChange={setProcessedPath}
-              helper="على نفس جهاز الـbackend. بعد نجاح TIFF فقط تُنقل الصور المرتبة إلى مجلد بتاريخ العملية."
-            />
-          </div>
-
           <p className="mt-5 text-[13.5px] font-semibold text-slate-900">
             وضع الألوان للتصدير
           </p>
@@ -295,6 +363,71 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
               selected={exportMode === "RGBA"}
               onClick={() => setExportMode("RGBA")}
             />
+          </div>
+
+          <div className="mt-5">
+            <button
+              onClick={() => setAdvancedOpen((v) => !v)}
+              className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-right"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="font-bold text-slate-900">
+                  إعدادات التحسين المتقدمة (LNS)
+                </p>
+                <p className="mt-[3px] text-xs text-slate-500">
+                  تأثر فقط لما يزيد عدد القطع عن 100 قطعة موضوعة -- اتركها فارغة
+                  لو مش متأكد
+                </p>
+              </div>
+              <svg
+                viewBox="0 0 24 24"
+                className={`h-5 w-5 shrink-0 text-slate-500 transition-transform ${advancedOpen ? "rotate-180" : ""}`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M6 9l6 6 6-6"
+                />
+              </svg>
+            </button>
+
+            {advancedOpen && (
+              <div className="mt-2.5 space-y-3 rounded-xl border border-slate-200 p-3.5">
+                <NumberField
+                  label="أقصى عدد تكرارات (max iterations)"
+                  value={lnsMaxIterationsLarge}
+                  onChange={setLnsMaxIterationsLarge}
+                  error={errors.lnsMaxIterationsLarge}
+                  // Matches LNS_MAX_ITERATIONS_LARGE's own default in main.py
+                  // (_positive_env_int("NESTING_LNS_MAX_ITERATIONS_LARGE", 15)) --
+                  // update both together if that default ever changes.
+                  placeholder="الافتراضي: 15"
+                  helper={
+                    !errors.lnsMaxIterationsLarge
+                      ? "من 1 إلى 60. سيبها فاضية عشان تستخدم قيمة السيرفر الافتراضية (15). رفعها بيدي الخوارزمية محاولات أكتر تلاقي ترتيب أحسن، لكن السقف الزمني للسيرفر (time budget) ممكن يوقفها قبل ما تكمل كل التكرارات."
+                      : undefined
+                  }
+                />
+                <NumberField
+                  label="نسبة إعادة الترتيب (destroy fraction)"
+                  value={lnsDestroyFractionLarge}
+                  onChange={setLnsDestroyFractionLarge}
+                  error={errors.lnsDestroyFractionLarge}
+                  // Matches LNS_DESTROY_FRACTION_LARGE's own default in main.py
+                  // (_positive_env_float("NESTING_LNS_DESTROY_FRACTION_LARGE", 0.15)) --
+                  // update both together if that default ever changes.
+                  placeholder="الافتراضي: 0.15"
+                  helper={
+                    !errors.lnsDestroyFractionLarge
+                      ? "من 0.01 إلى 0.40 (مثال: 0.20). سيبها فاضية عشان تستخدم قيمة السيرفر الافتراضية (0.15). رفعها بيخلي كل تكرار يشيل ويعيد ترتيب نسبة أكبر من القطع، لكن رفعها كتير (فوق 0.40) بيبقى مبالغ فيه لأنه بيهد أغلب الترتيب بدل تحسين مستهدف."
+                      : undefined
+                  }
+                />
+              </div>
+            )}
           </div>
         </div>
 
@@ -328,12 +461,19 @@ function NumberField({
   onChange,
   error,
   helper,
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   error?: string;
   helper?: string;
+  // Shown only while the field is empty -- used for the LNS advanced fields
+  // to surface the backend's own tiered default (see _lns_pipeline_settings
+  // in main.py) without writing an actual value into the input. An empty
+  // field must still submit as undefined ("use backend default"), so this is
+  // purely a visual hint, not a prefilled value.
+  placeholder?: string;
 }) {
   return (
     <label className="block flex-1">
@@ -343,7 +483,8 @@ function NumberField({
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={`w-full rounded-[11px] border bg-white px-3.5 py-3 text-sm text-slate-900 outline-none focus:border-primary ${
+        placeholder={placeholder}
+        className={`w-full rounded-[11px] border bg-white px-3.5 py-3 text-sm text-slate-900 outline-none focus:border-primary placeholder:text-slate-400 ${
           error ? "border-danger" : "border-slate-300"
         }`}
       />
