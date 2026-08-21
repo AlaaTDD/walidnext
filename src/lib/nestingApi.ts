@@ -50,9 +50,33 @@ function normalizeBaseUrl(value: string): string {
   return trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
 }
 
-/** The standard setup is entirely local: browser -> loopback -> Python. */
+/**
+ * The standard setup is entirely local: browser -> loopback -> Python.
+ * On a remote deployment (e.g. Vercel), the loopback address is unreachable
+ * from the visitor's browser, so the env-var or hardcoded fallback only
+ * applies when the page is actually served from localhost.
+ */
 function defaultBaseUrl(): string {
-  return process.env.NEXT_PUBLIC_API_URL?.trim() || LOCAL_BACKEND_URL;
+  const envUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
+
+  // If there's an explicit non-loopback env URL, always use it (the deployer
+  // set it on purpose, e.g. pointing at a Render/Railway backend).
+  if (envUrl && !/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/.test(envUrl)) {
+    return envUrl;
+  }
+
+  // On a non-localhost host (Vercel, etc.) a loopback URL is useless -- the
+  // user must configure the backend URL via the settings sheet. Returning the
+  // loopback anyway would cause every API call to silently fail with a CORS /
+  // network error before the user even gets a chance to correct it.
+  if (
+    typeof window !== "undefined" &&
+    !/(localhost|127\.0\.0\.1|\[::1\])/.test(window.location.hostname)
+  ) {
+    return envUrl || LOCAL_BACKEND_URL;
+  }
+
+  return envUrl || LOCAL_BACKEND_URL;
 }
 
 function numberParam(value: number): string {

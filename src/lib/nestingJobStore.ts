@@ -668,10 +668,18 @@ async function loadSettings(set: Setter): Promise<void> {
   } catch {
     // best-effort only
   }
+
+  // On a non-localhost deployment (e.g. Vercel), the default 127.0.0.1:8000
+  // is unreachable. Any explicitly saved URL must be honoured regardless of
+  // where the frontend is hosted.
+  const isRemoteHost =
+    typeof window !== "undefined" &&
+    !/(localhost|127\.0\.0\.1|\[::1\])/.test(window.location.hostname);
+
   if (
     serverUrl != null &&
     serverUrl.trim().length > 0 &&
-    isExplicitServerChoice
+    (isExplicitServerChoice || isRemoteHost)
   ) {
     api = new NestingApiClient(serverUrl);
   } else if (serverUrl != null && serverUrl.trim().length > 0) {
@@ -973,23 +981,16 @@ async function restorePersistedJob(set: Setter, get: Getter): Promise<void> {
     if (parsed == null || typeof parsed !== "object") return;
     const jobId: string | null =
       typeof parsed.jobId === "string" ? parsed.jobId : null;
-    const settingsMap = asStringMap(parsed.settings);
     const partsRaw = parsed.parts;
     if (!Array.isArray(partsRaw)) return;
 
-    const settings: NestingJobSettings = {
-      sheetWidthMm: asDouble(settingsMap.sheetWidthMm),
-      sheetHeightMm: asDouble(settingsMap.sheetHeightMm),
-      sheetMarginMm: asDouble(settingsMap.sheetMarginMm),
-      clearanceMm: asDouble(settingsMap.clearanceMm),
-      dpi: asDouble(settingsMap.dpi),
-      exportMode: settingsMap.exportMode?.toString() ?? "RGB",
-      backgroundColor: settingsMap.backgroundColor?.toString() ?? "#FFFFFF",
-      packingAttempts: Math.min(
-        1,
-        Math.max(1, asInt(settingsMap.packingAttempts) ?? 1),
-      ),
-    };
+    // IMPORTANT: Settings are NOT restored from the manifest. loadSettings()
+    // already loaded the authoritative copy from localStorage before this
+    // function runs. The manifest's settings snapshot is intentionally ignored
+    // so that a stale manifest (from an older job) never silently overwrites
+    // the user's latest saved preferences. localStorage is the single source
+    // of truth for settings; the manifest is only authoritative for
+    // parts + jobId.
 
     const parts: UploadedPart[] = partsRaw
       .filter((item) => item && typeof item === "object")
@@ -1015,7 +1016,7 @@ async function restorePersistedJob(set: Setter, get: Getter): Promise<void> {
     set((state) => ({
       job: {
         ...state.job,
-        settings,
+        // Preserve settings from loadSettings() — do NOT overwrite with manifest
         uploadedParts: parts,
         stage: "upload",
         errorMessage: undefined,
@@ -1167,6 +1168,9 @@ async function persistManifest(get: Getter): Promise<void> {
   const payload = {
     version: 3,
     jobId: id,
+    // Settings are stored here for diagnostic/backup purposes only.
+    // restorePersistedJob intentionally ignores this block and uses
+    // localStorage (loaded by loadSettings) as the single source of truth.
     settings: {
       sheetWidthMm: job.settings.sheetWidthMm,
       sheetHeightMm: job.settings.sheetHeightMm,
@@ -1176,6 +1180,8 @@ async function persistManifest(get: Getter): Promise<void> {
       exportMode: job.settings.exportMode,
       backgroundColor: job.settings.backgroundColor,
       packingAttempts: job.settings.packingAttempts,
+      lnsMaxIterationsLarge: job.settings.lnsMaxIterationsLarge ?? null,
+      lnsDestroyFractionLarge: job.settings.lnsDestroyFractionLarge ?? null,
     },
     parts: job.uploadedParts.map((part) => ({
       id: part.id,
