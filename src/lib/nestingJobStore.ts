@@ -476,7 +476,6 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
               stage: "failed",
               errorMessage: `تعذر إتمام الحساب: ${error}`,
             },
-            serverReachable: false,
           }));
         }
       }
@@ -543,7 +542,6 @@ export const useNestingJobStore = create<NestingJobState>()((set, get) => ({
               stage: "failed",
               errorMessage: `فشل التصدير: ${error}`,
             },
-            serverReachable: false,
           }));
         }
       }
@@ -804,7 +802,6 @@ async function prepareAndUpload(
       }
       set((state) => ({
         job: { ...state.job, errorMessage: message },
-        serverReachable: error.statusCode != null,
       }));
     } else {
       set((state) => ({
@@ -812,7 +809,6 @@ async function prepareAndUpload(
           ...state.job,
           errorMessage: `توقف الرفع مع حفظ التقدم: ${error}`,
         },
-        serverReachable: false,
       }));
     }
   } finally {
@@ -1082,16 +1078,32 @@ async function recoverRemoteState(set: Setter, get: Getter): Promise<void> {
     }
     await persistManifest(get);
   } catch (error) {
-    if (error instanceof ApiException) {
+    // IMPORTANT: Do NOT touch serverReachable here. Only checkServer()
+    // (which calls /health) is authoritative for server reachability.
+    // A failed getJob (e.g. 404 after server restart) used to set
+    // serverReachable: false, which made the status dot show "غير متصل"
+    // even though the server was perfectly healthy and responding to
+    // health checks. The periodic checkServer() in page.tsx would then
+    // set it back to true, but recoverRemoteState would immediately
+    // override it again on the next call, causing a permanent red dot.
+    if (error instanceof ApiException && error.statusCode === 404) {
+      // The job was deleted (server restarted). Clear the stale jobId
+      // so we don't keep retrying a dead job on every health-check cycle.
+      moduleJobId = null;
       set((state) => ({
         job: {
           ...state.job,
-          errorMessage:
-            error.statusCode === 404
-              ? "الـjob المحفوظ غير موجود على السيرفر."
-              : `السيرفر متاح جزئيًا، وسيتم الاستكمال تلقائيًا عند عودته: ${error.message}`,
+          errorMessage: "الـjob المحفوظ غير موجود على السيرفر. ابدأ مهمة جديدة.",
         },
-        serverReachable: error.statusCode != null,
+        jobId: null,
+      }));
+      await persistManifest(get);
+    } else if (error instanceof ApiException) {
+      set((state) => ({
+        job: {
+          ...state.job,
+          errorMessage: `السيرفر متاح جزئيًا، وسيتم الاستكمال تلقائيًا عند عودته: ${error.message}`,
+        },
       }));
     } else {
       set((state) => ({
@@ -1099,7 +1111,6 @@ async function recoverRemoteState(set: Setter, get: Getter): Promise<void> {
           ...state.job,
           errorMessage: `تعذر الاتصال بالسيرفر: ${error}`,
         },
-        serverReachable: false,
       }));
     }
   }
@@ -1268,7 +1279,6 @@ async function openProgressStream(
     if (generation !== progressStreamGeneration) return; // ignore intentional aborts
     if (!receivedTerminalEvent) {
       set({
-        serverReachable: false,
         ...(target === "compute"
           ? {
               computeProgressMessage:
